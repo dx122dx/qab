@@ -27,6 +27,18 @@ import java.nio.file.Path;
 public class QShopDbLoader {
     private static final Logger LOGGER = LoggerFactory.getLogger("qab/QShopDbLoader");
 
+    /** 上一次加载时的校验结果（包括成功的 warnings），供命令层查询展示。 */
+    private static DbValidationResult lastResult = null;
+
+    /**
+     * 获取上一次 {@link #load(Path)} 调用时的校验结果。
+     *
+     * @return 上一次的校验结果，若从未加载过则返回 {@code null}
+     */
+    public static DbValidationResult getLastResult() {
+        return lastResult;
+    }
+
     /**
      * 从指定 chunkscanner 导出 ZIP 加载 QShop 数据。
      * <p>
@@ -51,8 +63,10 @@ public class QShopDbLoader {
 
         // 2. 校验完整性（字段合法性 + SHA256）
         DbValidationResult validation = pkg.validate();
+        lastResult = validation;
         if (!validation.valid()) {
-            throw new IOException("Package validation failed: " + validation.errors());
+            throw new IOException("Package validation failed. errors=" + validation.errors()
+                    + " warnings=" + validation.warnings());
         }
         if (!validation.warnings().isEmpty()) {
             LOGGER.warn("Package validation warnings: {}", validation.warnings());

@@ -1,5 +1,6 @@
 package com.billy65536.qab;
 
+import com.billy65536.chunkscanner.core.db.DbValidationResult;
 import com.billy65536.qab.loader.QShopDbLoader;
 import com.billy65536.qab.planning.ShoppingPlanner;
 import com.billy65536.qab.planning.model.ShopExportData;
@@ -14,7 +15,11 @@ import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallba
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.command.CommandSource;
+import net.minecraft.text.ClickEvent;
+import net.minecraft.text.MutableText;
+import net.minecraft.text.Style;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -97,8 +102,12 @@ public class QabCommands {
                             .executes(ctx -> execGeneratePlan(ctx,
                                     StringArgumentType.getString(ctx, "name"))));
 
+            var peek = literal("peek")
+                    .executes(QabCommands::execPeek);
+
             root.then(select);
             root.then(plan);
+            root.then(peek);
 
             dispatcher.register(root);
             LOGGER.info("Registered /qab commands");
@@ -188,8 +197,25 @@ public class QabCommands {
             try {
                 export = QShopDbLoader.load(selectedDb);
             } catch (Exception e) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.db_load_failed",
-                        selectedDb.getFileName().toString(), e.getMessage()));
+                DbValidationResult vr = QShopDbLoader.getLastResult();
+                if (vr != null && (!vr.errors().isEmpty() || !vr.warnings().isEmpty())) {
+                    int errCount = vr.errors().size();
+                    int warnCount = vr.warnings().size();
+                    MutableText msg = Text.translatable("qab.msg.db_validation_issues",
+                            errCount, warnCount).copy();
+                    msg.append(Text.literal(" "));
+                    msg.append(Text.literal("[")
+                            .append(Text.translatable("qab.msg.peek_click_here"))
+                            .append(Text.literal("]"))
+                            .setStyle(Style.EMPTY
+                                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/qab peek"))
+                                    .withColor(Formatting.AQUA)
+                                    .withUnderline(true)));
+                    ctx.getSource().sendError(msg);
+                } else {
+                    ctx.getSource().sendError(Text.translatable("qab.msg.db_load_failed",
+                            selectedDb.getFileName().toString(), e.getMessage()));
+                }
                 LOGGER.error("Failed to load chunkscanner DB: {}", selectedDb, e);
                 return 0;
             }
@@ -224,6 +250,35 @@ public class QabCommands {
             }
             return 0;
         }
+    }
+
+    // ---- peek validation result ----
+    private static int execPeek(CommandContext<FabricClientCommandSource> ctx) {
+        DbValidationResult vr = QShopDbLoader.getLastResult();
+        if (vr == null) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.peek_no_result"));
+            return 0;
+        }
+
+        if (!vr.errors().isEmpty()) {
+            ctx.getSource().sendFeedback(
+                    Text.translatable("qab.msg.peek_errors_header", vr.errors().size())
+                            .formatted(Formatting.RED));
+            for (String err : vr.errors()) {
+                ctx.getSource().sendFeedback(
+                        Text.literal("  - " + err).formatted(Formatting.RED));
+            }
+        }
+        if (!vr.warnings().isEmpty()) {
+            ctx.getSource().sendFeedback(
+                    Text.translatable("qab.msg.peek_warnings_header", vr.warnings().size())
+                            .formatted(Formatting.GOLD));
+            for (String warn : vr.warnings()) {
+                ctx.getSource().sendFeedback(
+                        Text.literal("  - " + warn).formatted(Formatting.GOLD));
+            }
+        }
+        return 1;
     }
 
     private static ShoppingList loadShoppingList(Path path) {
