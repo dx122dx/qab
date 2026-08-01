@@ -1,74 +1,95 @@
 plugins {
-	id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
-	id 'maven-publish'
+    id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
+    id 'maven-publish'
 }
 
 version = project.mod_version
 group = project.maven_group
 
+// Fabric Loom 镜像配置（为无法直连 Mojang 服务器的环境使用 BMCLAPI 镜像）
+ext {
+    loom_version_manifests = 'https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json'
+    loom_libraries_base = 'https://bmclapi2.bangbang93.com/libraries/'
+    loom_resources_base = 'https://bmclapi2.bangbang93.com/assets/'
+}
+
+loom {
+    // 使用 BMCLAPI 直接下载版本 JSON，绕过 version manifest
+    customMinecraftManifest = 'https://bmclapi2.bangbang93.com/v1/packages/a540b5c5ded34de717f3acc10c9d3704b66670d8/1.20.1.json'
+}
+
 repositories {
-	// Add repositories to retrieve artifacts from in here.
-	// You should only use this when depending on other mods because
-	// Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
-	// See https://docs.gradle.org/current/userguide/declaring_repositories.html
-	// for more information about repositories.
+    maven {
+        name = 'BMCLAPI Minecraft Libraries'
+        url = 'https://bmclapi2.bangbang93.com/libraries/'
+    }
+    maven {
+        name = 'Fabric'
+        url = 'https://maven.fabricmc.net/'
+    }
+    maven {
+        name = 'TerraformersMC'
+        url = 'https://maven.terraformersmc.com/'
+    }
+    maven {
+        name = 'Shedaniel'
+        url = 'https://maven.shedaniel.me/'
+    }
+    mavenCentral()
+    // Chunk Scanner 本地构建产物（需先 cd ../chunkscanner && ./gradlew build）
+    flatDir {
+        dirs "${rootDir}/../chunkscanner/build/libs"
+    }
 }
 
 dependencies {
-	// To change the versions see the gradle.properties file
-	minecraft "com.mojang:minecraft:${project.minecraft_version}"
-	mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
-	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    // To change the versions see the gradle.properties file
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
-	// Fabric API. This is technically optional, but you probably want it anyway.
-	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    // Fabric API
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    // Chunk Scanner — 读取 QShop 扫描数据（client 端）
+    // 通过 IChunkDb.FactoryRegistry 工厂模式加载，不硬编码 BinaryChunkDb
+    modImplementation "${project.chunkscanner_group}:${project.chunkscanner_artifact}:${project.chunkscanner_version}"
 }
 
 processResources {
-	def version = project.version
-	inputs.property "version", version
+    def version = project.version
+    inputs.property "version", version
 
-	filesMatching("fabric.mod.json") {
-		expand "version": version
-	}
+    filesMatching("fabric.mod.json") {
+        expand "version": version
+    }
 }
 
 tasks.withType(JavaCompile).configureEach {
-	it.options.release = 17
+    it.options.release = 21
 }
 
 java {
-	// Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
-	// if it is present.
-	// If you remove this line, sources will not be generated.
-	withSourcesJar()
-
-	sourceCompatibility = JavaVersion.VERSION_17
-	targetCompatibility = JavaVersion.VERSION_17
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
 }
 
 jar {
-	def projectName = project.name
-	inputs.property "projectName", projectName
+    def projectName = project.name
+    inputs.property "projectName", projectName
 
-	from("LICENSE") {
-		rename { "${it}_$projectName"}
-	}
+    from("LICENSE") {
+        rename { "${it}_$projectName"}
+    }
 }
 
-// configure the maven publication
 publishing {
-	publications {
-		create("mavenJava", MavenPublication) {
-			from components.java
-		}
-	}
-
-	// See https://docs.gradle.org/current/userguide/publishing_maven.html for information on how to set up publishing.
-	repositories {
-		// Add repositories to publish to here.
-		// Notice: This block does NOT have the same function as the block in the top level.
-		// The repositories here will be used for publishing your artifact, not for
-		// retrieving dependencies.
-	}
+    publications {
+        create("mavenJava", MavenPublication) {
+            from components.java
+        }
+    }
+    repositories {
+    }
 }
