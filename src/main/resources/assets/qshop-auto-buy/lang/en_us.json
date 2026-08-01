@@ -1,0 +1,15 @@
+{
+    "qab.msg.db_selected": "Selected DB: %s (%s)",
+    "qab.msg.db_not_found": "QShop database '%s' not found. Looked in %s and as a global path.",
+    "qab.msg.list_selected": "Selected shopping list: %s (%s)",
+    "qab.msg.list_not_found": "Shopping list '%s' not found. Looked in %s and as a global path.",
+    "qab.msg.no_db_selected": "No QShop database selected. Use /qab select db <file> first.",
+    "qab.msg.no_list_selected": "No shopping list selected. Use /qab select list <file> first.",
+    "qab.msg.list_parse_failed": "Failed to parse shopping list %s: %s",
+    "qab.msg.list_empty": "Shopping list %s is empty (no items).",
+    "qab.msg.db_load_failed": "Failed to load QShop database %s: %s",
+    "qab.msg.plan_write_failed": "Failed to write plan to %s: %s",
+    "qab.msg.plan_generated": "Plan generated: %s (%d entries, total cost %.2f, %d failed, %d warnings)",
+    "qab.msg.plan_io_error": "I/O error while generating plan: %s",
+    "qab.msg.plan_unexpected": "Unexpected error while generating plan: %s"
+}

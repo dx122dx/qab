@@ -111,18 +111,21 @@ public class QabCommands {
         Path candidate = CS_EXPORT_DIR.resolve(file + ".zip");
         if (Files.exists(candidate)) {
             selectedDb = candidate;
-        } else {
-            Path direct = Path.of(file);
-            if (Files.exists(direct)) {
-                selectedDb = direct;
-            } else {
-                ctx.getSource().sendError(Text.literal("File not found: " + file));
-                return 0;
-            }
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.db_selected",
+                    candidate.getFileName().toString(), candidate.toString()));
+            LOGGER.info("Selected DB: {}", selectedDb);
+            return 1;
         }
-        ctx.getSource().sendFeedback(Text.literal("Selected DB: " + selectedDb.getFileName()));
-        LOGGER.info("Selected DB: {}", selectedDb);
-        return 1;
+        Path direct = Path.of(file);
+        if (Files.exists(direct)) {
+            selectedDb = direct;
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.db_selected",
+                    direct.getFileName().toString(), direct.toString()));
+            LOGGER.info("Selected DB: {}", selectedDb);
+            return 1;
+        }
+        ctx.getSource().sendError(Text.translatable("qab.msg.db_not_found", file, CS_EXPORT_DIR.toString()));
+        return 0;
     }
 
     // ---- select list ----
@@ -131,28 +134,31 @@ public class QabCommands {
         Path candidate = QAB_LIST_DIR.resolve(file + ".json");
         if (Files.exists(candidate)) {
             selectedList = candidate;
-        } else {
-            Path direct = Path.of(file);
-            if (Files.exists(direct)) {
-                selectedList = direct;
-            } else {
-                ctx.getSource().sendError(Text.literal("File not found: " + file));
-                return 0;
-            }
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.list_selected",
+                    candidate.getFileName().toString(), candidate.toString()));
+            LOGGER.info("Selected list: {}", selectedList);
+            return 1;
         }
-        ctx.getSource().sendFeedback(Text.literal("Selected list: " + selectedList.getFileName()));
-        LOGGER.info("Selected list: {}", selectedList);
-        return 1;
+        Path direct = Path.of(file);
+        if (Files.exists(direct)) {
+            selectedList = direct;
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.list_selected",
+                    direct.getFileName().toString(), direct.toString()));
+            LOGGER.info("Selected list: {}", selectedList);
+            return 1;
+        }
+        ctx.getSource().sendError(Text.translatable("qab.msg.list_not_found", file, QAB_LIST_DIR.toString()));
+        return 0;
     }
 
     // ---- plan generator ----
     private static int execGeneratePlan(CommandContext<FabricClientCommandSource> ctx, String name) {
         if (selectedDb == null) {
-            ctx.getSource().sendError(Text.literal("No DB selected. Use /qab select db first."));
+            ctx.getSource().sendError(Text.translatable("qab.msg.no_db_selected"));
             return 0;
         }
         if (selectedList == null) {
-            ctx.getSource().sendError(Text.literal("No list selected. Use /qab select list first."));
+            ctx.getSource().sendError(Text.translatable("qab.msg.no_list_selected"));
             return 0;
         }
 
@@ -167,27 +173,55 @@ public class QabCommands {
             Files.createDirectories(QAB_LIST_DIR);
 
             ShoppingList list = loadShoppingList(selectedList);
-            if (list == null || list.getItems() == null || list.getItems().isEmpty()) {
-                ctx.getSource().sendError(Text.literal("Failed to load shopping list: " + selectedList));
+            if (list == null) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.list_parse_failed",
+                        selectedList.getFileName().toString(), "JSON parse or read error"));
+                return 0;
+            }
+            if (list.getItems() == null || list.getItems().isEmpty()) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.list_empty",
+                        selectedList.getFileName().toString()));
                 return 0;
             }
 
-            ShopExportData export = QShopDbLoader.load(selectedDb);
+            ShopExportData export;
+            try {
+                export = QShopDbLoader.load(selectedDb);
+            } catch (Exception e) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.db_load_failed",
+                        selectedDb.getFileName().toString(), e.getMessage()));
+                LOGGER.error("Failed to load chunkscanner DB: {}", selectedDb, e);
+                return 0;
+            }
+
             ShoppingPlan plan = ShoppingPlanner.generatePlan(list, export);
 
             Path outPath = QAB_LIST_DIR.resolve(planName);
             String json = new GsonBuilder().setPrettyPrinting().create().toJson(plan);
-            Files.writeString(outPath, json, StandardCharsets.UTF_8);
+            try {
+                Files.writeString(outPath, json, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.plan_write_failed",
+                        outPath.getFileName().toString(), e.getMessage()));
+                LOGGER.error("Failed to write plan: {}", outPath, e);
+                return 0;
+            }
 
-            ctx.getSource().sendFeedback(Text.literal(
-                    "Plan generated: " + outPath.getFileName()
-                            + " (" + plan.getPlan().size() + " entries, total cost "
-                            + plan.getTotalCost() + ")"));
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.plan_generated",
+                    outPath.getFileName().toString(),
+                    plan.getPlan().size(),
+                    plan.getTotalCost(),
+                    plan.getFailed().size(),
+                    plan.getWarn().size()));
             LOGGER.info("Plan generated: {} ({} entries)", outPath, plan.getPlan().size());
             return 1;
         } catch (Exception e) {
             LOGGER.error("Failed to generate plan", e);
-            ctx.getSource().sendError(Text.literal("Failed to generate plan: " + e.getMessage()));
+            if (e instanceof IOException) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.plan_io_error", e.getMessage()));
+            } else {
+                ctx.getSource().sendError(Text.translatable("qab.msg.plan_unexpected", e.getMessage()));
+            }
             return 0;
         }
     }

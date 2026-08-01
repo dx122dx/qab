@@ -1,0 +1,15 @@
+{
+    "qab.msg.db_selected": "已选择数据库：%s（%s）",
+    "qab.msg.db_not_found": "未找到 QShop 数据库"%s"。已搜索 %s 及全局路径。",
+    "qab.msg.list_selected": "已选择购物清单：%s（%s）",
+    "qab.msg.list_not_found": "未找到购物清单"%s"。已搜索 %s 及全局路径。",
+    "qab.msg.no_db_selected": "尚未选择数据库。请先使用 /qab select db <file>。",
+    "qab.msg.no_list_selected": "尚未选择购物清单。请先使用 /qab select list <file>。",
+    "qab.msg.list_parse_failed": "解析购物清单 %s 失败：%s",
+    "qab.msg.list_empty": "购物清单 %s 为空（无商品）。",
+    "qab.msg.db_load_failed": "加载 QShop 数据库 %s 失败：%s",
+    "qab.msg.plan_write_failed": "写入计划到 %s 失败：%s",
+    "qab.msg.plan_generated": "计划已生成：%s（%d 条，总成本 %.2f，%d 条失败，%d 条警告）",
+    "qab.msg.plan_io_error": "生成计划时发生 I/O 错误：%s",
+    "qab.msg.plan_unexpected": "生成计划时发生未知错误：%s"
+}
