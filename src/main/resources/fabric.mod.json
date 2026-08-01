@@ -26,6 +26,6 @@
         "fabric-api": "*"
     },
     "recommends": {
-        "chunkscanner": ">=1.1.0"
+        "chunkscanner": ">=1.1.0-dev-20260801.2"
     }
 }

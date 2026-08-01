@@ -36,34 +36,6 @@ public class QShopDbLoader {
     private static final String KEY_SCANNER_ID = "scannerId";
 
     /**
-     * 从 qab 配置目录扫描第一个 chunkscanner 导出 ZIP 并加载。
-     *
-     * @return 加载得到的商店数据，若未找到或全部失败则返回空 {@link ShopExportData}
-     */
-    public static ShopExportData loadDefault() {
-        Path configDir = FabricLoader.getInstance().getConfigDir().resolve("qab");
-        if (!Files.isDirectory(configDir)) {
-            LOGGER.info("qab config dir not found: {}", configDir);
-            return new ShopExportData();
-        }
-
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(configDir, "*.zip")) {
-            for (Path zipPath : stream) {
-                LOGGER.info("Found chunkscanner export: {}", zipPath.getFileName());
-                try {
-                    return load(zipPath);
-                } catch (IOException e) {
-                    LOGGER.warn("Failed to load {} — trying next", zipPath.getFileName(), e);
-                }
-            }
-        } catch (IOException e) {
-            LOGGER.warn("Failed to scan qab config dir for chunkscanner exports", e);
-        }
-
-        return new ShopExportData();
-    }
-
-    /**
      * 从指定 chunkscanner 导出 ZIP 加载 QShop 数据。
      * <p>
      * 内部通过 metadata.json 的 {@code databaseType} 字段，
