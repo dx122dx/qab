@@ -6,7 +6,6 @@ import com.billy65536.qab.planning.model.ShopExportData;
 import com.billy65536.qab.planning.model.ShopExportEntry;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import net.fabricmc.loader.api.FabricLoader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
