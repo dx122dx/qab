@@ -1,9 +1,9 @@
 {
     "qab.msg.db_selected": "Selected DB: %s (%s)",
     "qab.msg.db_not_found": "QShop database '%s' not found. Looked in %s and as a global path.",
-    "qab.msg.db_select_failed": "Failed to select QShop database '%s': %s",
-    "qab.msg.db_validation_errors": "Validation errors: %d issue(s)",
-    "qab.msg.db_validation_warnings": "Validation warnings: %d issue(s)",
+    "qab.msg.db_select_io_error": "I/O error while reading QShop database: %s",
+    "qab.msg.db_select_metadata_invalid": "Invalid QShop database metadata read: %s",
+    "qab.msg.db_select_unexpected": "Unexpected error while reading QShop database: %s",
     "qab.msg.list_selected": "Selected shopping list: %s (%s)",
     "qab.msg.list_not_found": "Shopping list '%s' not found. Looked in %s and as a global path.",
     "qab.msg.no_db_selected": "No QShop database selected. Use /qab select db <file> first.",

@@ -16,6 +16,8 @@ import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.command.CommandSource;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -115,29 +117,21 @@ public class QabCommands {
         if (Files.exists(target)) {
             try {
                 selectedDb = new QShopDbLoader(target);
-            } catch (IOException ioe) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.db_select_failed", file, "IO Errors"));
-                LOGGER.warn("Failed to select DB '{}': {}", target.toString(), ioe);
-                selectedDb = null;
-                return 0;
-            } catch (IllegalArgumentException iae) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.db_select_failed", file, "Illegal metadata"));
-                LOGGER.warn("Failed to select DB '{}': {}", target.toString(), iae);
+            } catch (Exception e) {
+                if (e instanceof IOException) {
+                    ctx.getSource().sendError(Text.translatable("db_select_io_error", e.getMessage()));
+                } else if(e instanceof IllegalArgumentException) {
+                    ctx.getSource().sendError(Text.translatable("db_select_metadata_invalid", e.getMessage()));
+                } else {
+                    ctx.getSource().sendError(Text.translatable("db_select_unexpected", e.getMessage()));
+                }
+                LOGGER.warn("Failed to select DB '{}': {}", target.toString(), e);
                 selectedDb = null;
                 return 0;
             }
 
             DbValidationResult result = selectedDb.validate();
-            if(result.errors().size() > 0) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.db_validation_errors", result.errors().size()));
-                for(String error: result.errors())
-                    ctx.getSource().sendError(Text.literal(error));
-            }
-            if(result.warnings().size() > 0) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.db_validation_warnings", result.warnings().size()));
-                for(String warning: result.warnings())
-                    ctx.getSource().sendError(Text.literal(warning));
-            }
+            printValidationIssues(ctx, result);
             if(!result.valid()) {
                 ctx.getSource().sendError(Text.translatable("qab.msg.db_select_failed", file, "Invalid database"));
                 LOGGER.warn("Failed to select DB '{}': Invalid database", target.toString());
@@ -214,20 +208,6 @@ public class QabCommands {
             try {
                 export = selectedDb.load();
             } catch (Exception e) {
-                DbValidationResult vr = selectedDb.validate();
-                boolean hasIssues = vr != null && (!vr.errors().isEmpty() || !vr.warnings().isEmpty());
-                if (hasIssues) {
-                    int errCount = vr.errors().size();
-                    int warnCount = vr.warnings().size();
-                    ctx.getSource().sendError(Text.translatable("qab.msg.db_validation_issues",
-                            errCount, warnCount));
-                    for (String error : vr.errors()) {
-                        ctx.getSource().sendError(Text.literal("  [E] " + error));
-                    }
-                    for (String warning : vr.warnings()) {
-                        ctx.getSource().sendError(Text.literal("  [W] " + warning));
-                    }
-                }
                 ctx.getSource().sendError(Text.translatable("qab.msg.db_load_failed",
                         selectedDb.getPath().getFileName().toString(), e.getMessage()));
                 LOGGER.error("Failed to load chunkscanner DB: {}", selectedDb, e);
@@ -274,6 +254,22 @@ public class QabCommands {
         } catch (Exception e) {
             LOGGER.error("Failed to load shopping list: {}", path, e);
             return null;
+        }
+    }
+
+    private static void printValidationIssues(CommandContext<FabricClientCommandSource> ctx, DbValidationResult vr) {
+        boolean hasIssues = vr != null && (!vr.errors().isEmpty() || !vr.warnings().isEmpty());
+        if (hasIssues) {
+            int errCount = vr.errors().size();
+            int warnCount = vr.warnings().size();
+            ctx.getSource().sendError(Text.translatable("qab.msg.db_validation_issues",
+                    errCount, warnCount).formatted(errCount > 0? Formatting.RED: Formatting.YELLOW));
+            for (String error : vr.errors()) {
+                ctx.getSource().sendError(Text.literal("  [E] " + error));
+            }
+            for (String warning : vr.warnings()) {
+                ctx.getSource().sendError(Text.literal("  [W] " + warning).formatted(Formatting.YELLOW));
+            }
         }
     }
 }

@@ -124,6 +124,10 @@ public class QShopDbLoader {
                 data.addEntry(entry);
             }
 
+            try {
+                db.close();
+            } catch (Exception ignored) { }
+
             LOGGER.info("Loaded {} QShop entries from {}", data.size(), zipPath.getFileName());
             return data;
 
