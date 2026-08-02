@@ -40,7 +40,9 @@ public class QabCommands {
 
     private static final Path GAME_DIR = FabricLoader.getInstance().getGameDir();
     private static final Path CS_EXPORT_DIR = GAME_DIR.resolve("chunkscanner").resolve("export");
-    private static final Path QAB_LIST_DIR = GAME_DIR.resolve("qab").resolve("list");
+    private static final Path QAB_DIR = GAME_DIR.resolve("qab");
+    private static final Path QAB_LIST_DIR = QAB_DIR.resolve("list");
+    private static final Path QAB_PLAN_DIR = QAB_DIR.resolve("plan");
 
     private static final DateTimeFormatter PLAN_TIME = DateTimeFormatter.ofPattern("yyMMddHHmmss");
 
@@ -55,7 +57,11 @@ public class QabCommands {
                     try (DirectoryStream<Path> ds = Files.newDirectoryStream(CS_EXPORT_DIR, "*.zip")) {
                         for (Path p : ds) {
                             String n = p.getFileName().toString();
-                            names.add(n.substring(0, n.length() - 4)); // strip ".zip"
+                            String bn = n.substring(0, n.length() - 4); // strip ".zip"
+                            if(bn.indexOf(' ') >= 0) {
+                                bn = "\"" + bn + "\"";
+                            }
+                            names.add(bn);
                         }
                     } catch (IOException ignored) {
                     }
@@ -71,7 +77,11 @@ public class QabCommands {
                     try (DirectoryStream<Path> ds = Files.newDirectoryStream(QAB_LIST_DIR, "*.json")) {
                         for (Path p : ds) {
                             String n = p.getFileName().toString();
-                            names.add(n.substring(0, n.length() - 5)); // strip ".json"
+                            String bn = n.substring(0, n.length() - 5); // strip ".json"
+                            if(bn.indexOf(' ') >= 0) {
+                                bn = "\"" + bn + "\"";
+                            }
+                            names.add(bn);
                         }
                     } catch (IOException ignored) {
                     }
@@ -190,7 +200,7 @@ public class QabCommands {
         }
 
         try {
-            Files.createDirectories(QAB_LIST_DIR);
+            Files.createDirectories(QAB_PLAN_DIR);
 
             ShoppingList list = loadShoppingList(selectedList);
             if (list == null) {
@@ -216,7 +226,7 @@ public class QabCommands {
 
             ShoppingPlan plan = ShoppingPlanner.generatePlan(list, export);
 
-            Path outPath = QAB_LIST_DIR.resolve(planName);
+            Path outPath = QAB_PLAN_DIR.resolve(planName);
             String json = new GsonBuilder().setPrettyPrinting().create().toJson(plan);
             try {
                 Files.writeString(outPath, json, StandardCharsets.UTF_8);
