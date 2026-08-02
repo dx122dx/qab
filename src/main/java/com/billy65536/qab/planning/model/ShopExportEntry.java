@@ -174,13 +174,6 @@ public class ShopExportEntry {
     }
 
     /**
-     * Returns the effective available quantity, accounting for infinite stock.
-     */
-    public int getEffectiveQuantity() {
-        return quantity == INFINITE_STOCK ? Integer.MAX_VALUE : quantity;
-    }
-
-    /**
      * Whether this is a sell-mode shop (player can buy from).
      */
     public boolean isSellMode() {

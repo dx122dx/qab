@@ -7,7 +7,7 @@ import org.slf4j.LoggerFactory;
 
 public class QShopAutoBuyMod implements ClientModInitializer {
     public static final String MOD_ID = "qshop-auto-buy";
-    public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+    public static final Logger LOGGER = LoggerFactory.getLogger("qab");
 
     @Override
     public void onInitializeClient() {

@@ -15,11 +15,7 @@ import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallba
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.command.CommandSource;
-import net.minecraft.text.ClickEvent;
-import net.minecraft.text.MutableText;
-import net.minecraft.text.Style;
 import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,7 +42,7 @@ public class QabCommands {
 
     private static final DateTimeFormatter PLAN_TIME = DateTimeFormatter.ofPattern("yyMMddHHmmss");
 
-    static Path selectedDb = null;
+    static QShopDbLoader selectedDb = null;
     static Path selectedList = null;
 
     // ---- auto-complete: .zip basenames in chunkscanner/export/ ----
@@ -102,12 +98,8 @@ public class QabCommands {
                             .executes(ctx -> execGeneratePlan(ctx,
                                     StringArgumentType.getString(ctx, "name"))));
 
-            var peek = literal("peek")
-                    .executes(QabCommands::execPeek);
-
             root.then(select);
             root.then(plan);
-            root.then(peek);
 
             dispatcher.register(root);
             LOGGER.info("Registered /qab commands");
@@ -118,18 +110,43 @@ public class QabCommands {
     private static int execSelectDb(CommandContext<FabricClientCommandSource> ctx) {
         String file = StringArgumentType.getString(ctx, "file");
         Path candidate = CS_EXPORT_DIR.resolve(file + ".zip");
-        if (Files.exists(candidate)) {
-            selectedDb = candidate;
-            ctx.getSource().sendFeedback(Text.translatable("qab.msg.db_selected",
-                    candidate.getFileName().toString(), candidate.toString()));
-            LOGGER.info("Selected DB: {}", selectedDb);
-            return 1;
-        }
         Path direct = Path.of(file);
-        if (Files.exists(direct)) {
-            selectedDb = direct;
+        Path target = Files.exists(candidate)? candidate: direct;
+        if (Files.exists(target)) {
+            try {
+                selectedDb = new QShopDbLoader(target);
+            } catch (IOException ioe) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.db_select_failed", file, "IO Errors"));
+                LOGGER.warn("Failed to select DB '{}': {}", target.toString(), ioe);
+                selectedDb = null;
+                return 0;
+            } catch (IllegalArgumentException iae) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.db_select_failed", file, "Illegal metadata"));
+                LOGGER.warn("Failed to select DB '{}': {}", target.toString(), iae);
+                selectedDb = null;
+                return 0;
+            }
+
+            DbValidationResult result = selectedDb.validate();
+            if(result.errors().size() > 0) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.db_validation_errors", result.errors().size()));
+                for(String error: result.errors())
+                    ctx.getSource().sendError(Text.literal(error));
+            }
+            if(result.warnings().size() > 0) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.db_validation_warnings", result.warnings().size()));
+                for(String warning: result.warnings())
+                    ctx.getSource().sendError(Text.literal(warning));
+            }
+            if(!result.valid()) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.db_select_failed", file, "Invalid database"));
+                LOGGER.warn("Failed to select DB '{}': Invalid database", target.toString());
+                selectedDb = null;
+                return 0;
+            }
+
             ctx.getSource().sendFeedback(Text.translatable("qab.msg.db_selected",
-                    direct.getFileName().toString(), direct.toString()));
+                    target.getFileName().toString(), target.toString()));
             LOGGER.info("Selected DB: {}", selectedDb);
             return 1;
         }
@@ -195,27 +212,24 @@ public class QabCommands {
 
             ShopExportData export;
             try {
-                export = QShopDbLoader.load(selectedDb);
+                export = selectedDb.load();
             } catch (Exception e) {
-                DbValidationResult vr = QShopDbLoader.getLastResult();
-                if (vr != null && (!vr.errors().isEmpty() || !vr.warnings().isEmpty())) {
+                DbValidationResult vr = selectedDb.validate();
+                boolean hasIssues = vr != null && (!vr.errors().isEmpty() || !vr.warnings().isEmpty());
+                if (hasIssues) {
                     int errCount = vr.errors().size();
                     int warnCount = vr.warnings().size();
-                    MutableText msg = Text.translatable("qab.msg.db_validation_issues",
-                            errCount, warnCount).copy();
-                    msg.append(Text.literal(" "));
-                    msg.append(Text.literal("[")
-                            .append(Text.translatable("qab.msg.peek_click_here"))
-                            .append(Text.literal("]"))
-                            .setStyle(Style.EMPTY
-                                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/qab peek"))
-                                    .withColor(Formatting.AQUA)
-                                    .withUnderline(true)));
-                    ctx.getSource().sendError(msg);
-                } else {
-                    ctx.getSource().sendError(Text.translatable("qab.msg.db_load_failed",
-                            selectedDb.getFileName().toString(), e.getMessage()));
+                    ctx.getSource().sendError(Text.translatable("qab.msg.db_validation_issues",
+                            errCount, warnCount));
+                    for (String error : vr.errors()) {
+                        ctx.getSource().sendError(Text.literal("  [E] " + error));
+                    }
+                    for (String warning : vr.warnings()) {
+                        ctx.getSource().sendError(Text.literal("  [W] " + warning));
+                    }
                 }
+                ctx.getSource().sendError(Text.translatable("qab.msg.db_load_failed",
+                        selectedDb.getPath().getFileName().toString(), e.getMessage()));
                 LOGGER.error("Failed to load chunkscanner DB: {}", selectedDb, e);
                 return 0;
             }
@@ -250,35 +264,6 @@ public class QabCommands {
             }
             return 0;
         }
-    }
-
-    // ---- peek validation result ----
-    private static int execPeek(CommandContext<FabricClientCommandSource> ctx) {
-        DbValidationResult vr = QShopDbLoader.getLastResult();
-        if (vr == null) {
-            ctx.getSource().sendError(Text.translatable("qab.msg.peek_no_result"));
-            return 0;
-        }
-
-        if (!vr.errors().isEmpty()) {
-            ctx.getSource().sendFeedback(
-                    Text.translatable("qab.msg.peek_errors_header", vr.errors().size())
-                            .formatted(Formatting.RED));
-            for (String err : vr.errors()) {
-                ctx.getSource().sendFeedback(
-                        Text.literal("  - " + err).formatted(Formatting.RED));
-            }
-        }
-        if (!vr.warnings().isEmpty()) {
-            ctx.getSource().sendFeedback(
-                    Text.translatable("qab.msg.peek_warnings_header", vr.warnings().size())
-                            .formatted(Formatting.GOLD));
-            for (String warn : vr.warnings()) {
-                ctx.getSource().sendFeedback(
-                        Text.literal("  - " + warn).formatted(Formatting.GOLD));
-            }
-        }
-        return 1;
     }
 
     private static ShoppingList loadShoppingList(Path path) {

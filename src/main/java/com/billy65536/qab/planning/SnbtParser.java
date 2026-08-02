@@ -134,7 +134,7 @@ public class SnbtParser {
      * Extracts the content of the "tag" compound from SNBT.
      */
     private static String extractTagContent(String snbt) {
-        int tagIndex = snbt.indexOf("tag:");
+        int tagIndex = indexOfTagKey(snbt);
         if (tagIndex < 0) {
             // No tag section - if matchNbt is required, can't match
             return null;
@@ -156,16 +156,36 @@ public class SnbtParser {
                 depth--;
                 if (depth == 0) break;
             } else if (c == '"') {
-                // Skip string literals
+                // Skip string literals (handle backslash escapes)
                 i++;
                 while (i < snbt.length() && snbt.charAt(i) != '"') {
-                    if (snbt.charAt(i) == '\\') i++; // skip escaped chars
-                    i++;
+                    if (snbt.charAt(i) == '\\') {
+                        i++; // skip the backslash
+                        if (i < snbt.length()) i++; // skip the escaped character
+                    } else {
+                        i++;
+                    }
                 }
             }
         }
 
         return snbt.substring(braceStart, i + 1);
+    }
+
+    /**
+     * 查找 tag 作为独立 key 的起始位置（其后紧跟 ':'，且前导为 '{'、空白、',' 或串首）。
+     * 避免误命中 target:/retag:/multitag: 等键。
+     */
+    private static int indexOfTagKey(String snbt) {
+        int i = 0;
+        while (true) {
+            int idx = snbt.indexOf("tag:", i);
+            if (idx < 0) return -1;
+            boolean boundary = idx == 0
+                    || " \t\n\r{,(".indexOf(snbt.charAt(idx - 1)) >= 0;
+            if (boundary) return idx;
+            i = idx + 4; // 跳过本次误命中，继续向后查找
+        }
     }
 
     /**
