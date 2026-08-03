@@ -41,9 +41,6 @@ public final class BlockMappingConfig {
     /** 配置文件路径：{gameDir}/config/qab/block-mapping.json。 */
     public static final Path MAPPING_FILE = QabConfig.CONFIG_DIR.resolve("block-mapping.json");
 
-    /** 合并后的当前生效表，reload() 后刷新。volatile 保证命令线程可见性。 */
-    private static volatile Merged merged = buildDefault();
-
     private BlockMappingConfig() {
     }
 
@@ -136,6 +133,15 @@ public final class BlockMappingConfig {
             "minecraft:powder_snow_cauldron", List.of("minecraft:cauldron", "minecraft:powder_snow_bucket")
     );
 
+    /**
+     * 合并后的当前生效表，reload() 后刷新。volatile 保证命令线程可见性。
+     *
+     * <p><b>声明位置不可上移</b>：静态字段初始化按源码顺序执行，此处必须位于
+     * {@code DEFAULT_*} 三张表之后，否则 {@link #buildDefault()} 读到的是 null，
+     * 触发 {@code ExceptionInInitializerError}。
+     */
+    private static volatile Merged merged = buildDefault();
+
     /** 仅内置默认、无合并。 */
     private static Merged buildDefault() {
         return new Merged(
@@ -147,19 +153,34 @@ public final class BlockMappingConfig {
 
     /** 内置默认表 + 配置文件覆盖/追加。 */
     private static Merged merge(Raw raw) {
+        // JSON 中允许出现 null 元素/值（如 ["a", null]），需逐项过滤，
+        // 否则 addAll/putAll 会把 null 带入表中，导致解析时出现意外行为。
         Set<String> unobtainable = new HashSet<>(DEFAULT_UNOBTAINABLE);
         if (raw.unobtainable != null) {
-            unobtainable.addAll(raw.unobtainable);
+            for (String id : raw.unobtainable) {
+                if (id != null && !id.isBlank()) {
+                    unobtainable.add(id);
+                }
+            }
         }
 
         Map<String, String> irregular = new LinkedHashMap<>(DEFAULT_IRREGULAR);
         if (raw.irregular != null) {
-            irregular.putAll(raw.irregular);
+            raw.irregular.forEach((k, v) -> {
+                if (k != null && v != null && !k.isBlank() && !v.isBlank()) {
+                    irregular.put(k, v);
+                }
+            });
         }
 
         Map<String, List<String>> composite = new LinkedHashMap<>(DEFAULT_COMPOSITE);
         if (raw.composite != null) {
-            composite.putAll(raw.composite);
+            raw.composite.forEach((k, v) -> {
+                if (k != null && !k.isBlank() && v != null && v.size() >= 2
+                        && v.get(0) != null && v.get(1) != null) {
+                    composite.put(k, v);
+                }
+            });
         }
 
         return new Merged(unobtainable, irregular, composite);
