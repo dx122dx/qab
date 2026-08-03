@@ -1,6 +1,6 @@
-package com.billy65536.qab.generate;
+package com.billy65536.qab.config;
 
-import com.billy65536.qab.QabConfig;
+import com.billy65536.qab.generator.BlockItemResolver;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import org.slf4j.Logger;
@@ -78,12 +78,12 @@ public final class BlockMappingConfig {
     }
 
     /** 返回当前生效的合并表（供 {@link BlockItemResolver} 读取）。 */
-    static Merged current() {
+    public static Merged current() {
         return merged;
     }
 
     // ---- 合并后的结果 ----
-    record Merged(Set<String> unobtainable,
+    public record Merged(Set<String> unobtainable,
                   Map<String, String> irregular,
                   Map<String, List<String>> composite) {
     }

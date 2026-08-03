@@ -1,7 +1,4 @@
-package com.billy65536.qab.generate;
-
-import com.billy65536.qab.planning.model.ShoppingItem;
-import com.billy65536.qab.planning.model.ShoppingList;
+package com.billy65536.qab.generator;
 
 import net.sandrohc.schematic4j.SchematicLoader;
 import net.sandrohc.schematic4j.schematic.Schematic;
@@ -10,6 +7,9 @@ import net.sandrohc.schematic4j.schematic.types.SchematicBlockEntity;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import com.billy65536.qab.planner.model.ShoppingItem;
+import com.billy65536.qab.planner.model.ShoppingList;
 
 import java.nio.file.Path;
 import java.util.ArrayList;

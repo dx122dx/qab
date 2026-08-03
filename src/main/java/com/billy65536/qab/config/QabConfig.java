@@ -1,4 +1,4 @@
-package com.billy65536.qab;
+package com.billy65536.qab.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;

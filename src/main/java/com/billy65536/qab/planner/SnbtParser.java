@@ -1,4 +1,4 @@
-package com.billy65536.qab.planning;
+package com.billy65536.qab.planner;
 
 import java.util.*;
 import java.util.regex.Matcher;

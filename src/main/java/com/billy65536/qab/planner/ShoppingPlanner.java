@@ -1,9 +1,9 @@
-package com.billy65536.qab.planning;
-
-import com.billy65536.qab.planning.model.*;
+package com.billy65536.qab.planner;
 
 import java.util.*;
 import java.util.stream.Collectors;
+
+import com.billy65536.qab.planner.model.*;
 
 /**
 * 核心购物规划器，根据购物清单和导出的QShop数据生成最优购买计划。

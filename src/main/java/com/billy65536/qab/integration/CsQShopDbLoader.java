@@ -1,11 +1,12 @@
-package com.billy65536.qab.loader;
+package com.billy65536.qab.integration;
 
 import com.billy65536.chunkscanner.components.analyzer.QShopDbAdapter;
 import com.billy65536.chunkscanner.core.IChunkDb;
 import com.billy65536.chunkscanner.core.db.DbPackage;
 import com.billy65536.chunkscanner.core.db.DbValidationResult;
-import com.billy65536.qab.planning.model.ShopExportData;
-import com.billy65536.qab.planning.model.ShopExportEntry;
+import com.billy65536.qab.planner.model.ShopExportData;
+import com.billy65536.qab.planner.model.ShopExportEntry;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,7 +34,7 @@ import java.nio.file.Path;
  * @see QShopDbAdapter
  * @see ShopExportData
  */
-public class QShopDbLoader {
+public class CsQShopDbLoader {
     private static final Logger LOGGER = LoggerFactory.getLogger("qab.loader.QShopDbLoader");
 
     /** 导出 ZIP 文件路径。 */
@@ -49,7 +50,7 @@ public class QShopDbLoader {
      * @throws IOException              文件不存在或 metadata 缺失/可读性错误
      * @throws IllegalArgumentException metadata 结构不合法
      */
-    public QShopDbLoader(Path zipPath) throws IOException, IllegalArgumentException {
+    public CsQShopDbLoader(Path zipPath) throws IOException, IllegalArgumentException {
         this.zipPath = zipPath;
         this.pkg = DbPackage.open(zipPath);
     }
@@ -70,7 +71,7 @@ public class QShopDbLoader {
 
     /**
      * 加载导出包并将 QShop 记录映射为领域模型。
-     * 需执行 {@link QShopDbLoader#validate()} 确保数据包合法性。
+     * 需执行 {@link CsQShopDbLoader#validate()} 确保数据包合法性。
      *
      * <h3>执行步骤</h3>
      * <ol>

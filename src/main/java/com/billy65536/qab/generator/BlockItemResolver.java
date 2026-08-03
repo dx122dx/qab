@@ -1,4 +1,4 @@
-package com.billy65536.qab.generate;
+package com.billy65536.qab.generator;
 
 import net.minecraft.item.Item;
 import net.minecraft.item.Items;
@@ -9,6 +9,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+
+import com.billy65536.qab.config.BlockMappingConfig;
 
 /**
  * 将原理图中的<b>方块 ID</b> 解析为实际可购买的<b>物品 ID</b>。
@@ -71,7 +73,7 @@ public final class BlockItemResolver {
      * 由 {@link BlockMappingConfig#reload()} 在配置刷新后调用，使本类的静态缓存指向最新合并表。
      * 包级可见，避免外部误调用。
      */
-    static void refresh() {
+    public static void refresh() {
         mappings = BlockMappingConfig.current();
     }
 

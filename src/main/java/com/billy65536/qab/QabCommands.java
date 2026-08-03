@@ -1,14 +1,16 @@
 package com.billy65536.qab;
 
 import com.billy65536.chunkscanner.core.db.DbValidationResult;
-import com.billy65536.qab.generate.ListGenConfig;
-import com.billy65536.qab.generate.BlockMappingConfig;
-import com.billy65536.qab.generate.SchematicListGenerator;
-import com.billy65536.qab.loader.QShopDbLoader;
-import com.billy65536.qab.planning.ShoppingPlanner;
-import com.billy65536.qab.planning.model.ShopExportData;
-import com.billy65536.qab.planning.model.ShoppingList;
-import com.billy65536.qab.planning.model.ShoppingPlan;
+import com.billy65536.qab.config.BlockMappingConfig;
+import com.billy65536.qab.config.QabConfig;
+import com.billy65536.qab.generator.ListGenConfig;
+import com.billy65536.qab.generator.SchematicListGenerator;
+import com.billy65536.qab.integration.CsNavigationHelper;
+import com.billy65536.qab.integration.CsQShopDbLoader;
+import com.billy65536.qab.planner.ShoppingPlanner;
+import com.billy65536.qab.planner.model.ShopExportData;
+import com.billy65536.qab.planner.model.ShoppingList;
+import com.billy65536.qab.planner.model.ShoppingPlan;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -56,7 +58,7 @@ public class QabCommands {
 
     private static final DateTimeFormatter PLAN_TIME = DateTimeFormatter.ofPattern("yyMMddHHmmss");
 
-    static QShopDbLoader selectedDb = null;
+    static CsQShopDbLoader selectedDb = null;
     static Path selectedList = null;
 
     // ---- auto-complete: .zip basenames in chunkscanner/export/ ----
@@ -211,7 +213,7 @@ public class QabCommands {
         Path target = Files.exists(candidate)? candidate: direct;
         if (Files.exists(target)) {
             try {
-                selectedDb = new QShopDbLoader(target);
+                selectedDb = new CsQShopDbLoader(target);
             } catch (Exception e) {
                 if (e instanceof IOException) {
                     ctx.getSource().sendError(Text.translatable("db_select_io_error", e.getMessage()));
@@ -501,7 +503,7 @@ public class QabCommands {
         }
 
         QabConfig config = QabConfig.load();
-        int queued = QabNavigationHelper.applyPlan(plan, config);
+        int queued = CsNavigationHelper.applyPlan(plan, config);
         if (queued <= 0) {
             ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_no_target",
                     target.getFileName().toString()));

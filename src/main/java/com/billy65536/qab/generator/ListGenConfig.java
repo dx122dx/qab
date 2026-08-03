@@ -1,4 +1,4 @@
-package com.billy65536.qab.generate;
+package com.billy65536.qab.generator;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

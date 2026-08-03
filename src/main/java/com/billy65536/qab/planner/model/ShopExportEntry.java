@@ -1,4 +1,4 @@
-package com.billy65536.qab.planning.model;
+package com.billy65536.qab.planner.model;
 
 import com.google.gson.annotations.SerializedName;
 

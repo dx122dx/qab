@@ -1,6 +1,8 @@
-package com.billy65536.qab;
+package com.billy65536.qab.integration;
 
 import com.billy65536.chunkscanner.core.navigation.NavigationCondition;
+import com.billy65536.qab.config.QabConfig;
+
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.entity.SignBlockEntity;
 import net.minecraft.client.MinecraftClient;

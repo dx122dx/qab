@@ -1,9 +1,11 @@
-package com.billy65536.qab;
+package com.billy65536.qab.integration;
 
 import com.billy65536.chunkscanner.core.navigation.ChunkScannerNavigation;
 import com.billy65536.chunkscanner.core.navigation.NavigationEntry;
-import com.billy65536.qab.planning.model.PlanEntry;
-import com.billy65536.qab.planning.model.ShoppingPlan;
+import com.billy65536.qab.config.QabConfig;
+import com.billy65536.qab.planner.model.PlanEntry;
+import com.billy65536.qab.planner.model.ShoppingPlan;
+
 import net.minecraft.util.math.BlockPos;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,10 +24,10 @@ import org.slf4j.LoggerFactory;
  *
  * 维度切换由 chunkscanner 导航门面自动暂停/恢复。
  */
-public final class QabNavigationHelper {
+public final class CsNavigationHelper {
     private static final Logger LOGGER = LoggerFactory.getLogger("qab.nav");
 
-    private QabNavigationHelper() {
+    private CsNavigationHelper() {
     }
 
     /**

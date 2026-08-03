@@ -1,4 +1,4 @@
-package com.billy65536.qab.planning.model;
+package com.billy65536.qab.planner.model;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -6,7 +6,7 @@ import java.util.List;
 
 /**
  * 从 chunkscanner ZIP 导出加载的 QShop 数据容器。
- * 由 {@link com.billy65536.qab.loader.QShopDbLoader} 填充。
+ * 由 {@link com.billy65536.qab.integration.CsQShopDbLoader} 填充。
  */
 public class ShopExportData {
     private final List<ShopExportEntry> entries;
