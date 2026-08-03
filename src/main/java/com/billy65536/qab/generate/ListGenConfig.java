@@ -24,6 +24,9 @@ import java.util.Locale;
  *   <li>{@code min} —— 单项最小数量，低于该值的条目被提升到该值，默认不限制</li>
  *   <li>{@code threshold} —— 单项最小数量阈值，低于该值的条目被丢弃，默认 1</li>
  *   <li>{@code blockEntity} —— 是否把方块实体计入统计（true/false），默认 false</li>
+ *   <li>{@code rawId} —— 是否保留原始方块 ID 而不转换为可购买物品 ID，默认 false。
+ *       默认会把 {@code wall_torch} 之类的特殊形式映射为 {@code torch}；
+ *       开启后按方块 ID 原样输出（通常仅用于调试）</li>
  *   <li>{@code exclude} —— 排除的方块 ID，逗号分隔，可多次出现；
  *       支持不带命名空间的简写与 {@code *} 后缀通配（如 {@code *_wall_sign}）</li>
  *   <li>{@code sort} —— 排序方式：{@code count}（数量降序，默认）/ {@code id}（ID 升序）</li>
@@ -66,6 +69,9 @@ public class ListGenConfig {
 
     /** 是否统计方块实体。null = false。 */
     public Boolean includeBlockEntities;
+
+    /** 是否保留原始方块 ID（不做方块→物品映射）。null = false。 */
+    public Boolean rawId;
 
     /** 排除的方块 ID 模式列表。空表示不排除。 */
     public final List<String> excludes = new ArrayList<>();
@@ -112,6 +118,7 @@ public class ListGenConfig {
                     case "min" -> config.minCount = requireNonNegative(key, Integer.parseInt(value));
                     case "threshold" -> config.threshold = requireNonNegative(key, Integer.parseInt(value));
                     case "blockentity", "blockentities" -> config.includeBlockEntities = parseBoolean(key, value);
+                    case "rawid", "raw" -> config.rawId = parseBoolean(key, value);
                     case "exclude", "excludes" -> config.addExcludes(value);
                     case "sort" -> config.sort = parseSort(value);
                     default -> config.warn("Unknown config key: " + key);
@@ -198,6 +205,10 @@ public class ListGenConfig {
         return includeBlockEntities != null && includeBlockEntities;
     }
 
+    public boolean rawIdOrDefault() {
+        return rawId != null && rawId;
+    }
+
     public SortMode sortOrDefault() {
         return sort == null ? SortMode.COUNT : sort;
     }
@@ -213,6 +224,7 @@ public class ListGenConfig {
         if (minCount != null) sb.append("min=").append(minCount).append(' ');
         if (threshold != null) sb.append("threshold=").append(threshold).append(' ');
         if (includeBlockEntities != null) sb.append("blockEntity=").append(includeBlockEntities).append(' ');
+        if (rawId != null) sb.append("rawId=").append(rawId).append(' ');
         if (!excludes.isEmpty()) sb.append("exclude=").append(String.join(",", excludes)).append(' ');
         if (sort != null) sb.append("sort=").append(sort.name().toLowerCase(Locale.ROOT)).append(' ');
         return sb.toString().trim();

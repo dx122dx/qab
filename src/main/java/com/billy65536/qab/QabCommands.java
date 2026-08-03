@@ -30,6 +30,8 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.argument;
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal;
@@ -404,6 +406,20 @@ public class QabCommands {
         if (result.skipped() > 0) {
             ctx.getSource().sendFeedback(Text.translatable("qab.msg.gen_list_skipped", result.skipped())
                     .formatted(Formatting.GRAY));
+        }
+        // 无法购买的方块（流体、火、活塞头等）单独提示，避免静默丢失
+        if (!result.unobtainable().isEmpty()) {
+            long unobtainableTotal = result.unobtainable().values().stream().mapToLong(Long::longValue).sum();
+            String preview = result.unobtainable().entrySet().stream()
+                    .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                    .limit(5)
+                    .map(e -> e.getKey() + " x" + e.getValue())
+                    .collect(Collectors.joining(", "));
+            if (result.unobtainable().size() > 5) {
+                preview += ", ...";
+            }
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.gen_list_unobtainable",
+                    result.unobtainable().size(), unobtainableTotal, preview).formatted(Formatting.YELLOW));
         }
         String display = config.toDisplayString();
         if (!display.isEmpty()) {

@@ -30,5 +30,6 @@
     "qab.msg.gen_list_write_failed": "写入购物清单到 %s 失败：%s",
     "qab.msg.gen_list_generated": "购物清单已生成：%s（%d 种方块，共 %d 个，尺寸 %s）",
     "qab.msg.gen_list_skipped": "已排除 %d 个方块。",
+    "qab.msg.gen_list_unobtainable": "有 %d 种（共 %d 个）方块无法购买，已从清单剔除：%s",
     "qab.msg.gen_list_config": "生效配置：%s"
 }

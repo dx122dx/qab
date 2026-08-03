@@ -29,5 +29,6 @@
     "qab.msg.gen_list_write_failed": "Failed to write shopping list to %s: %s",
     "qab.msg.gen_list_generated": "Shopping list generated: %s (%d block type(s), %d block(s), size %s)",
     "qab.msg.gen_list_skipped": "Excluded %d block(s).",
+    "qab.msg.gen_list_unobtainable": "%d block type(s) (%d total) cannot be bought and were removed: %s",
     "qab.msg.gen_list_config": "Effective config: %s"
 }

@@ -27,6 +27,8 @@ import java.util.Map;
  * <ul>
  *   <li>忽略空气类方块（air / cave_air / void_air / structure_void）</li>
  *   <li>忽略方块状态，仅按方块 ID 聚合</li>
+ *   <li>经 {@link BlockItemResolver} 把方块 ID 转成实际可购买的物品 ID
+ *       （如 {@code wall_torch → torch}），可用 {@code rawId=true} 关闭</li>
  *   <li>按配置应用倍率、冗余、阈值、排除与排序</li>
  * </ul>
  */
@@ -41,9 +43,14 @@ public class SchematicListGenerator {
     private static final List<String> AIR_BLOCKS = List.of(
             "minecraft:air", "minecraft:cave_air", "minecraft:void_air", "minecraft:structure_void");
 
-    /** 生成结果，附带统计信息用于命令回显。 */
+    /**
+     * 生成结果，附带统计信息用于命令回显。
+     *
+     * @param unobtainable 无法购买的方块 ID → 数量（如流体、火、活塞头），已从清单剔除
+     */
     public record Result(ShoppingList list, int blockTypes, long totalBlocks, int skipped,
-                         int width, int height, int length) {
+                         int width, int height, int length,
+                         Map<String, Long> unobtainable) {
     }
 
     private SchematicListGenerator() {
@@ -63,24 +70,13 @@ public class SchematicListGenerator {
             throw new IllegalStateException("Parser returned no schematic");
         }
 
-        Map<String, Long> counts = new HashMap<>();
-        long totalBlocks = 0L;
-        int skipped = 0;
+        Accumulator acc = new Accumulator(config);
 
         var it = schematic.blocks().iterator();
         while (it.hasNext()) {
             SchematicBlock block = it.next().right();
             if (block == null) continue;
-
-            String id = normalizeId(block.block());
-            if (id == null || isAir(id)) continue;
-
-            if (isExcluded(id, config.excludes)) {
-                skipped++;
-                continue;
-            }
-            counts.merge(id, 1L, Long::sum);
-            totalBlocks++;
+            acc.add(block.block());
         }
 
         if (config.includeBlockEntitiesOrDefault()) {
@@ -88,16 +84,13 @@ public class SchematicListGenerator {
             while (beIt.hasNext()) {
                 SchematicBlockEntity be = beIt.next();
                 if (be == null) continue;
-                String id = normalizeId(be.name());
-                if (id == null || isAir(id)) continue;
-                if (isExcluded(id, config.excludes)) {
-                    skipped++;
-                    continue;
-                }
-                counts.merge(id, 1L, Long::sum);
-                totalBlocks++;
+                acc.add(be.name());
             }
         }
+
+        Map<String, Long> counts = acc.counts;
+        long totalBlocks = acc.totalBlocks;
+        int skipped = acc.skipped;
 
         List<ShoppingItem> items = buildItems(counts, config);
 
@@ -112,7 +105,52 @@ public class SchematicListGenerator {
                 schematicPath.getFileName(), items.size(), totalBlocks, skipped);
 
         return new Result(list, items.size(), totalBlocks, skipped,
-                schematic.width(), schematic.height(), schematic.length());
+                schematic.width(), schematic.height(), schematic.length(),
+                acc.unobtainable);
+    }
+
+    /**
+     * 方块计数累加器：统一处理规范化、排除、方块→物品映射与不可获得统计，
+     * 使方块与方块实体两条统计路径行为一致。
+     */
+    private static final class Accumulator {
+        private final ListGenConfig config;
+        final Map<String, Long> counts = new HashMap<>();
+        final Map<String, Long> unobtainable = new HashMap<>();
+        long totalBlocks = 0L;
+        int skipped = 0;
+
+        Accumulator(ListGenConfig config) {
+            this.config = config;
+        }
+
+        void add(String rawId) {
+            String blockId = normalizeId(rawId);
+            if (blockId == null || isAir(blockId)) return;
+
+            // 排除判断基于原始方块 ID，符合用户书写直觉
+            // （如 exclude=*_wall_sign 应当拦住墙上告示牌）
+            if (isExcluded(blockId, config.excludes)) {
+                skipped++;
+                return;
+            }
+
+            if (config.rawIdOrDefault()) {
+                counts.merge(blockId, 1L, Long::sum);
+                totalBlocks++;
+                return;
+            }
+
+            BlockItemResolver.Resolved resolved = BlockItemResolver.resolve(blockId);
+            if (resolved.unobtainable()) {
+                unobtainable.merge(blockId, 1L, Long::sum);
+                return;
+            }
+            for (Map.Entry<String, Integer> e : resolved.items().entrySet()) {
+                counts.merge(e.getKey(), (long) e.getValue(), Long::sum);
+                totalBlocks += e.getValue();
+            }
+        }
     }
 
     /** 将统计结果转换为清单项，应用倍率 / 最小值 / 阈值 / 排序。 */
