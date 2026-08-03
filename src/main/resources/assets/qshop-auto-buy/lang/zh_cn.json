@@ -22,5 +22,13 @@
     "qab.msg.nav_apply_parse_failed": "解析计划 %s 失败：%s",
     "qab.msg.nav_apply_empty": "计划 %s 为空（无购买目标）。",
     "qab.msg.nav_apply_no_target": "计划 %s 没有可导航的目标（坐标解析失败）。",
-    "qab.msg.nav_apply_started": "导航已开始：%s（%d 个目标，购买命令 %s）"
+    "qab.msg.nav_apply_started": "导航已开始：%s（%d 个目标，购买命令 %s）",
+    "qab.msg.gen_list_no_file": "请指定要解析的原理图文件：/qab generate list <file> [config...]",
+    "qab.msg.gen_list_not_found": "未找到原理图\"%s\"。已搜索 %s 及全局路径。",
+    "qab.msg.gen_list_parse_failed": "解析原理图 %s 失败：%s",
+    "qab.msg.gen_list_empty": "原理图 %s 未统计到任何方块（可能全为空气或被排除）。",
+    "qab.msg.gen_list_write_failed": "写入购物清单到 %s 失败：%s",
+    "qab.msg.gen_list_generated": "购物清单已生成：%s（%d 种方块，共 %d 个，尺寸 %s）",
+    "qab.msg.gen_list_skipped": "已排除 %d 个方块。",
+    "qab.msg.gen_list_config": "生效配置：%s"
 }

@@ -54,6 +54,11 @@ dependencies {
     // Chunk Scanner — 读取 QShop 扫描数据（client 端）
     // 通过 IChunkDb.FactoryRegistry 工厂模式加载，不硬编码 BinaryChunkDb
     modImplementation "${project.chunkscanner_group}:${project.chunkscanner_artifact}:${project.chunkscanner_version}"
+
+    // schematic4j — 解析 .litematic / .schem / .schematic 原理图，用于生成购物清单
+    // 普通 Java 库（非 mod），需 include 打进最终 jar
+    implementation "net.sandrohc:schematic4j:${project.schematic4j_version}"
+    include "net.sandrohc:schematic4j:${project.schematic4j_version}"
 }
 
 processResources {

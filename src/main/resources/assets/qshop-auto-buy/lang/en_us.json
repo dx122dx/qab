@@ -21,5 +21,13 @@
     "qab.msg.nav_apply_parse_failed": "Failed to parse plan %s: %s",
     "qab.msg.nav_apply_empty": "Plan %s is empty (no purchase targets).",
     "qab.msg.nav_apply_no_target": "Plan %s has no navigable targets (coordinate parse failed).",
-    "qab.msg.nav_apply_started": "Navigation started: %s (%d target(s), buy command %s)"
+    "qab.msg.nav_apply_started": "Navigation started: %s (%d target(s), buy command %s)",
+    "qab.msg.gen_list_no_file": "Specify a schematic to parse: /qab generate list <file> [config...]",
+    "qab.msg.gen_list_not_found": "Schematic '%s' not found. Looked in %s and as a global path.",
+    "qab.msg.gen_list_parse_failed": "Failed to parse schematic %s: %s",
+    "qab.msg.gen_list_empty": "Schematic %s produced no blocks (all air or excluded).",
+    "qab.msg.gen_list_write_failed": "Failed to write shopping list to %s: %s",
+    "qab.msg.gen_list_generated": "Shopping list generated: %s (%d block type(s), %d block(s), size %s)",
+    "qab.msg.gen_list_skipped": "Excluded %d block(s).",
+    "qab.msg.gen_list_config": "Effective config: %s"
 }
