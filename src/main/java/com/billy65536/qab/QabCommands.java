@@ -2,6 +2,7 @@ package com.billy65536.qab;
 
 import com.billy65536.chunkscanner.core.db.DbValidationResult;
 import com.billy65536.qab.generate.ListGenConfig;
+import com.billy65536.qab.generate.BlockMappingConfig;
 import com.billy65536.qab.generate.SchematicListGenerator;
 import com.billy65536.qab.loader.QShopDbLoader;
 import com.billy65536.qab.planning.ShoppingPlanner;
@@ -347,6 +348,13 @@ public class QabCommands {
             ctx.getSource().sendError(Text.translatable("qab.msg.gen_list_no_file"));
             return 0;
         }
+
+        // 每次执行时实时加载方块→物品映射配置（config/qab/block-mapping.json）
+        boolean usedExternalMapping = BlockMappingConfig.reload();
+        ctx.getSource().sendFeedback(Text.translatable(
+                        usedExternalMapping ? "qab.msg.gen_list_mapping_custom" : "qab.msg.gen_list_mapping_default",
+                        BlockMappingConfig.MAPPING_FILE.toString())
+                .formatted(Formatting.GRAY));
 
         // file 逻辑与其他命令同：先在 schematics/ 下按扩展名查找，否则当全局路径
         Path target = resolveSchematic(file);

@@ -30,5 +30,7 @@
     "qab.msg.gen_list_generated": "Shopping list generated: %s (%d block type(s), %d block(s), size %s)",
     "qab.msg.gen_list_skipped": "Excluded %d block(s).",
     "qab.msg.gen_list_unobtainable": "%d block type(s) (%d total) cannot be bought and were removed: %s",
+    "qab.msg.gen_list_mapping_custom": "Loaded block mapping from config file: %s",
+    "qab.msg.gen_list_mapping_default": "Block mapping config not found, using built-in defaults: %s",
     "qab.msg.gen_list_config": "Effective config: %s"
 }

@@ -6,9 +6,9 @@ import net.minecraft.registry.Registries;
 import net.minecraft.util.Identifier;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * 将原理图中的<b>方块 ID</b> 解析为实际可购买的<b>物品 ID</b>。
@@ -61,64 +61,26 @@ public final class BlockItemResolver {
         }
     }
 
-    /**
-     * 纯技术性 / 无法购买的方块，直接从清单中剔除。
-     * 这些方块不应计入"失败"，因为它们本来就不该出现在购物清单里。
-     */
-    private static final Set<String> UNOBTAINABLE = Set.of(
-            "minecraft:air", "minecraft:cave_air", "minecraft:void_air", "minecraft:structure_void",
-            "minecraft:water", "minecraft:lava", "minecraft:bubble_column",
-            "minecraft:fire", "minecraft:soul_fire",
-            "minecraft:nether_portal", "minecraft:end_portal", "minecraft:end_gateway",
-            "minecraft:piston_head", "minecraft:moving_piston",
-            "minecraft:frosted_ice",
-            // 生长阶段方块，其"源头"另有其物（见 IRREGULAR），此处仅列无法单独获得者
-            "minecraft:attached_melon_stem", "minecraft:attached_pumpkin_stem",
-            "minecraft:bamboo_sapling", "minecraft:cave_vines_plant",
-            "minecraft:kelp_plant", "minecraft:twisting_vines_plant",
-            "minecraft:weeping_vines_plant", "minecraft:big_dripleaf_stem"
-    );
-
-    /**
-     * 不规则映射：无法用后缀规则推导，且注册表返回 AIR 的方块。
-     * 主要是作物的"生长态方块"与其"种子/产物"之间的命名差异。
-     */
-    private static final Map<String, String> IRREGULAR = Map.ofEntries(
-            Map.entry("minecraft:wall_torch", "minecraft:torch"),
-            Map.entry("minecraft:soul_wall_torch", "minecraft:soul_torch"),
-            Map.entry("minecraft:redstone_wall_torch", "minecraft:redstone_torch"),
-            Map.entry("minecraft:redstone_wire", "minecraft:redstone"),
-            Map.entry("minecraft:tripwire", "minecraft:string"),
-            // 作物：方块名为复数/茎，物品为单数/种子
-            Map.entry("minecraft:carrots", "minecraft:carrot"),
-            Map.entry("minecraft:potatoes", "minecraft:potato"),
-            Map.entry("minecraft:beetroots", "minecraft:beetroot_seeds"),
-            Map.entry("minecraft:melon_stem", "minecraft:melon_seeds"),
-            Map.entry("minecraft:pumpkin_stem", "minecraft:pumpkin_seeds"),
-            Map.entry("minecraft:cocoa", "minecraft:cocoa_beans"),
-            Map.entry("minecraft:torchflower_crop", "minecraft:torchflower_seeds"),
-            Map.entry("minecraft:pitcher_crop", "minecraft:pitcher_pod"),
-            Map.entry("minecraft:sweet_berry_bush", "minecraft:sweet_berries"),
-            Map.entry("minecraft:cave_vines", "minecraft:glow_berries"),
-            Map.entry("minecraft:tall_seagrass", "minecraft:seagrass"),
-            // 含液体的炼药锅：需要锅 + 一桶液体，此处取主体，液体由 COMPOSITE 补足
-            Map.entry("minecraft:powder_snow", "minecraft:powder_snow_bucket")
-    );
-
-    /**
-     * 组合方块：一个方块需要购买两件物品。
-     */
-    private static final Map<String, String[]> COMPOSITE = Map.of(
-            "minecraft:water_cauldron", new String[]{"minecraft:cauldron", "minecraft:water_bucket"},
-            "minecraft:lava_cauldron", new String[]{"minecraft:cauldron", "minecraft:lava_bucket"},
-            "minecraft:powder_snow_cauldron", new String[]{"minecraft:cauldron", "minecraft:powder_snow_bucket"}
-    );
+    /** 合并后的映射表（来自 BlockMappingConfig，reload 后刷新）。 */
+    private static volatile BlockMappingConfig.Merged mappings = BlockMappingConfig.current();
 
     private BlockItemResolver() {
     }
 
     /**
+     * 由 {@link BlockMappingConfig#reload()} 在配置刷新后调用，使本类的静态缓存指向最新合并表。
+     * 包级可见，避免外部误调用。
+     */
+    static void refresh() {
+        mappings = BlockMappingConfig.current();
+    }
+
+    /**
      * 将方块 ID 解析为可购买的物品 ID。
+     *
+     * <p>解析优先级：不可获得集 → 不规则表 → 组合方块 → 后缀规则（potted/candle/wall）
+     * → Minecraft 注册表兜底。前三张表来自 {@link BlockMappingConfig}（内置默认 + 配置文件合并），
+     * 可在不重启游戏的情况下经 {@code /qab generate list} 重新加载。
      *
      * @param blockId 已规范化的方块 ID（含命名空间、无方块状态）
      * @return 解析结果，永不为 null
@@ -136,18 +98,20 @@ public final class BlockItemResolver {
             id = "minecraft:" + id;
         }
 
-        if (UNOBTAINABLE.contains(id)) {
+        // 读取当前生效的合并表（reload 后指向新实例）
+        BlockMappingConfig.Merged m = mappings;
+        if (m.unobtainable().contains(id)) {
             return Resolved.none();
         }
 
-        String irregular = IRREGULAR.get(id);
+        String irregular = m.irregular().get(id);
         if (irregular != null) {
             return Resolved.of(irregular);
         }
 
-        String[] composite = COMPOSITE.get(id);
-        if (composite != null) {
-            return Resolved.of(composite[0], composite[1]);
+        List<String> composite = m.composite().get(id);
+        if (composite != null && composite.size() >= 2) {
+            return Resolved.of(composite.get(0), composite.get(1));
         }
 
         // 花盆：potted_X → flower_pot + X（X 需自身可获得）

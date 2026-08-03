@@ -11,7 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * QAB 运行时配置（JSON：{gameDir}/qab/qab.json）。
+ * QAB 运行时配置（JSON：{gameDir}/config/qab/qab.json）。
  *
  * <p>仅包含 QAB 自身需要的可配置项，不依赖 chunkscanner 的配置类。</p>
  *
@@ -26,6 +26,10 @@ import java.nio.file.Path;
 public final class QabConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger("qab.config");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    /** QAB 配置目录：{gameDir}/config/qab/。与 BlockMappingConfig 共用，作为单一路径来源。 */
+    public static final Path CONFIG_DIR = FabricLoader.getInstance().getGameDir()
+            .resolve("config").resolve("qab");
 
     private static final int DEFAULT_BUY_DELAY_MS = 500;
     private static final String DEFAULT_BUY_COMMAND = "/qs amount {count}";
@@ -42,15 +46,14 @@ public final class QabConfig {
     }
 
     /**
-     * 从默认路径加载配置：{gameDir}/qab/qab.json。
+     * 从默认路径加载配置：{gameDir}/config/qab/qab.json。
      * 文件不存在时使用默认值；解析失败回退默认值并告警。
      *
      * @return 加载后的配置（永不返回 null）
      */
     public static QabConfig load() {
         QabConfig cfg = new QabConfig();
-        Path path = FabricLoader.getInstance().getGameDir()
-                .resolve("qab").resolve("qab.json");
+        Path path = CONFIG_DIR.resolve("qab.json");
         if (!Files.exists(path)) {
             LOGGER.info("QAB config not found at {}, using defaults.", path);
             return cfg;

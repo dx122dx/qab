@@ -106,8 +106,13 @@ public final class QShopBuyCondition implements NavigationCondition {
                     client.execute(() -> {
                         ClientPlayerEntity p = client.player;
                         if (p != null) {
-                            p.networkHandler.sendChatMessage(command);
-                            LOGGER.info("QAB sent buy command: {}", command);
+                            if(command.startsWith("/")) {
+                                p.networkHandler.sendChatCommand(command);
+                                LOGGER.info("QAB sent buy command: {}", command);
+                            } else {
+                                p.networkHandler.sendChatMessage(command);
+                                LOGGER.info("QAB sent buy message: {}", command);
+                            }
                         }
                     });
                 } catch (Exception e) {
