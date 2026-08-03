@@ -6,6 +6,17 @@ plugins {
 version = project.mod_version
 group = project.maven_group
 
+// 自动复用 Chunk Scanner 工程的版本号，避免手动同步导致 build 失败。
+// 依赖 ../chunkscanner/gradle.properties 中的 mod_version；若路径失效则回退到兜底值。
+def csProps = new Properties()
+def csPropsFile = file("${rootDir}/../chunkscanner/gradle.properties")
+if (csPropsFile.exists()) {
+    csProps.load(new FileInputStream(csPropsFile))
+    project.ext.chunkscanner_version = csProps['mod_version']
+} else {
+    project.ext.chunkscanner_version = project.chunkscanner_default_version
+}
+
 // Fabric Loom 镜像配置（为无法直连 Mojang 服务器的环境使用 BMCLAPI 镜像）
 ext {
     loom_version_manifests = 'https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json'
