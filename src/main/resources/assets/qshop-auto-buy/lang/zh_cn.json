@@ -16,5 +16,11 @@
     "qab.msg.plan_write_failed": "写入计划到 %s 失败：%s",
     "qab.msg.plan_generated": "计划已生成：%s（%d 条，总成本 %.2f，%d 条失败，%d 条警告）",
     "qab.msg.plan_io_error": "生成计划时发生 I/O 错误：%s",
-    "qab.msg.plan_unexpected": "生成计划时发生未知错误：%s"
+    "qab.msg.plan_unexpected": "生成计划时发生未知错误：%s",
+    "qab.msg.nav_apply_no_file": "请指定要执行的计划文件：/qab nav apply <file>",
+    "qab.msg.nav_apply_not_found": "未找到计划文件\"%s\"。已搜索 %s 及全局路径。",
+    "qab.msg.nav_apply_parse_failed": "解析计划 %s 失败：%s",
+    "qab.msg.nav_apply_empty": "计划 %s 为空（无购买目标）。",
+    "qab.msg.nav_apply_no_target": "计划 %s 没有可导航的目标（坐标解析失败）。",
+    "qab.msg.nav_apply_started": "导航已开始：%s（%d 个目标，购买命令 %s）"
 }

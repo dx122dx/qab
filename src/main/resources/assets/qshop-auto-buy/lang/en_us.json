@@ -15,5 +15,11 @@
     "qab.msg.plan_write_failed": "Failed to write plan to %s: %s",
     "qab.msg.plan_generated": "Plan generated: %s (%d entries, total cost %.2f, %d failed, %d warnings)",
     "qab.msg.plan_io_error": "I/O error while generating plan: %s",
-    "qab.msg.plan_unexpected": "Unexpected error while generating plan: %s"
+    "qab.msg.plan_unexpected": "Unexpected error while generating plan: %s",
+    "qab.msg.nav_apply_no_file": "Specify a plan file to apply: /qab nav apply <file>",
+    "qab.msg.nav_apply_not_found": "Plan file '%s' not found. Looked in %s and as a global path.",
+    "qab.msg.nav_apply_parse_failed": "Failed to parse plan %s: %s",
+    "qab.msg.nav_apply_empty": "Plan %s is empty (no purchase targets).",
+    "qab.msg.nav_apply_no_target": "Plan %s has no navigable targets (coordinate parse failed).",
+    "qab.msg.nav_apply_started": "Navigation started: %s (%d target(s), buy command %s)"
 }

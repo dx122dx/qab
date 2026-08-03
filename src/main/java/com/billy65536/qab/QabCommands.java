@@ -89,6 +89,26 @@ public class QabCommands {
                 return CommandSource.suggestMatching(names, builder);
             };
 
+    // ---- auto-complete: .json basenames in qab/plan/ ----
+    private static final SuggestionProvider<FabricClientCommandSource> PLAN_SUGGESTIONS =
+            (ctx, builder) -> {
+                List<String> names = new ArrayList<>();
+                if (Files.isDirectory(QAB_PLAN_DIR)) {
+                    try (DirectoryStream<Path> ds = Files.newDirectoryStream(QAB_PLAN_DIR, "*.json")) {
+                        for (Path p : ds) {
+                            String n = p.getFileName().toString();
+                            String bn = n.substring(0, n.length() - 5); // strip ".json"
+                            if (bn.indexOf(' ') >= 0) {
+                                bn = "\"" + bn + "\"";
+                            }
+                            names.add(bn);
+                        }
+                    } catch (IOException ignored) {
+                    }
+                }
+                return CommandSource.suggestMatching(names, builder);
+            };
+
     // ---- register ----
     public static void register() {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
@@ -110,8 +130,17 @@ public class QabCommands {
                             .executes(ctx -> execGeneratePlan(ctx,
                                     StringArgumentType.getString(ctx, "name"))));
 
+            var nav = literal("nav")
+                    .then(literal("apply")
+                            .executes(ctx -> execNavApply(ctx, null))
+                            .then(argument("file", StringArgumentType.string())
+                                    .suggests(PLAN_SUGGESTIONS)
+                                    .executes(ctx -> execNavApply(ctx,
+                                            StringArgumentType.getString(ctx, "file")))));
+
             root.then(select);
             root.then(plan);
+            root.then(nav);
 
             dispatcher.register(root);
             LOGGER.info("Registered /qab commands");
@@ -254,6 +283,52 @@ public class QabCommands {
             }
             return 0;
         }
+    }
+
+    // ---- nav apply: 按计划自动寻路 + 到达自动购买 ----
+    private static int execNavApply(CommandContext<FabricClientCommandSource> ctx, String file) {
+        if (file == null || file.isBlank()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_no_file"));
+            return 0;
+        }
+
+        // file 逻辑与 select list 同：先找 qab/plan/<file>.json，否则当全局路径
+        Path candidate = QAB_PLAN_DIR.resolve(file + ".json");
+        Path target = Files.exists(candidate) ? candidate : Path.of(file);
+        if (!Files.exists(target)) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_not_found", file, QAB_PLAN_DIR.toString()));
+            return 0;
+        }
+
+        ShoppingPlan plan;
+        try {
+            String json = Files.readString(target, StandardCharsets.UTF_8);
+            plan = new Gson().fromJson(json, ShoppingPlan.class);
+        } catch (Exception e) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_parse_failed",
+                    target.getFileName().toString(), e.getMessage()));
+            LOGGER.error("Failed to parse plan: {}", target, e);
+            return 0;
+        }
+        if (plan == null || plan.getPlan() == null || plan.getPlan().isEmpty()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_empty",
+                    target.getFileName().toString()));
+            return 0;
+        }
+
+        QabConfig config = QabConfig.load();
+        int queued = QabNavigationHelper.applyPlan(plan, config);
+        if (queued <= 0) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_no_target",
+                    target.getFileName().toString()));
+            return 0;
+        }
+
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.nav_apply_started",
+                target.getFileName().toString(), queued, config.getBuyCommand()));
+        LOGGER.info("Nav apply started from {}: {} target(s), buy command='{}'",
+                target, queued, config.getBuyCommand());
+        return 1;
     }
 
     private static ShoppingList loadShoppingList(Path path) {
