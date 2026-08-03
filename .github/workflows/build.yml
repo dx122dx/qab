@@ -10,21 +10,35 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     steps:
-      - name: checkout repository
+      - name: checkout qab repository
         uses: actions/checkout@v6
+        with:
+          path: qab
+      - name: checkout chunkscanner (dependency)
+        uses: actions/checkout@v6
+        with:
+          repository: dx122dx/chunkscanner
+          ref: dev
+          path: chunkscanner
       - name: validate gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
       - name: setup jdk
         uses: actions/setup-java@v5
         with:
-          java-version: '25'
-          distribution: 'microsoft'
+          java-version: '21'
+          distribution: 'temurin'
       - name: make gradle wrapper executable
-        run: chmod +x ./gradlew
-      - name: build
-        run: ./gradlew build
+        run: |
+          chmod +x qab/gradlew
+          chmod +x chunkscanner/gradlew
+      - name: build chunkscanner
+        working-directory: chunkscanner
+        run: ./gradlew build --no-daemon
+      - name: build qab
+        working-directory: qab
+        run: ./gradlew build --no-daemon
       - name: capture build artifacts
         uses: actions/upload-artifact@v7
         with:
           name: Artifacts
-          path: build/libs/
+          path: qab/build/libs/
