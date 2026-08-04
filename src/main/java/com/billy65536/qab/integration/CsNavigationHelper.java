@@ -51,9 +51,15 @@ public final class CsNavigationHelper {
                 continue;
             }
             int buyCount = entry.getTotal(); // count + redundancy
-            NavigationEntry navEntry = new NavigationEntry(pp.dimensionId, pp.x, pp.y, pp.z);
-            QShopBuyCondition cond = new QShopBuyCondition(
-                    new BlockPos(pp.x, pp.y, pp.z), buyCount, config);
+
+            BlockPos signPos = new BlockPos(pp.x, pp.y, pp.z);
+            // 导航目标即告示牌方块格本身：Baritone 会停在它相邻的某个可站立格
+            // （地面牌→牌下方地面，墙牌→牌前方地面，悬空牌→相邻可站格）。
+            // 不假设"牌前固定一格"，因为牌子可能在墙上/柱上/半空，没有通用的前方落点。
+            // 是否能点到由 QShopBuyCondition 按"距离 + 视线命中"判定。
+            NavigationEntry navEntry = new NavigationEntry(
+                    pp.dimensionId, pp.x, pp.y, pp.z);
+            QShopBuyCondition cond = new QShopBuyCondition(signPos, buyCount, config);
             nav.enqueue(navEntry, cond);
             queued++;
         }

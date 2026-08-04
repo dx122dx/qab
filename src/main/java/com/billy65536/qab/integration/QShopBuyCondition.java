@@ -68,7 +68,7 @@ public final class QShopBuyCondition implements NavigationCondition {
     private int aimTicks;
 
     /**
-     * @param signPos  目标告示牌坐标
+     * @param signPos  目标告示牌坐标（方块格本身）
      * @param buyCount 购买总量（count + redundancy），替换命令模板中的 {@code {count}}
      * @param config   QAB 配置（延时、命令模板、可点击距离）
      */
@@ -93,8 +93,9 @@ public final class QShopBuyCondition implements NavigationCondition {
             return false;
         }
 
-        // 2) 先判断是否走到附近：只有进入可点击范围才接管视角，
+        // 2) 先判断是否走到「可交互距离」内：只有离牌子够近才接管视角，
         //    否则会在赶路途中不断把玩家的头拧向目标，干扰 Baritone 寻路。
+        //    不假设玩家的站位（牌子可能在墙上/柱上/半空），只看距离是否够近能点到。
         Vec3d eye = player.getEyePos();
         Vec3d signCenter = Vec3d.ofCenter(signPos);
         double reach = config.getClickReachDist();
@@ -103,12 +104,45 @@ public final class QShopBuyCondition implements NavigationCondition {
             return false;
         }
 
-        // 3) 到位了：主动把视角转向告示牌中心。
+        // 3) 到位了：主动把视角转向牌子中心。
         //    Baritone 只负责把身体走过去，不会转头看目标，必须由我们自己对准。
+        //    瞄准牌格几何中心即可——只要玩家在可交互距离内，视线必能扫到牌的某一面。
+        double dx = signCenter.x - eye.x;
+        double dy = signCenter.y - eye.y;
+        double dz = signCenter.z - eye.z;
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        float calcYaw = (float) (MathHelper.atan2(-dx, dz) * (180.0 / Math.PI));
+        float calcPitch = (float) (-(MathHelper.atan2(dy, horizontal) * (180.0 / Math.PI)));
+
         lookAt(player, signCenter);
 
-        // 4) 射线检测确认真的能点到（视线未被墙体/其他方块遮挡，且在 reach 距离内）
+        // 4) 射线检测确认视线能命中牌子本身（任意面均可：侧/上/下，不挑剔）。
+        //    命中 signPos 即视为"能点到"，用命中的那一面去交互。
         BlockHitResult hit = raycastToSign(client, player, reach);
+
+        // ---- 诊断日志（节流：每 10 tick 一次，避免刷屏） ----
+        if (aimTicks % 10 == 0) {
+            String hitInfo;
+            if (hit == null) {
+                HitResult raw = client.world.raycast(new RaycastContext(
+                        eye, signCenter,
+                        RaycastContext.ShapeType.OUTLINE,
+                        RaycastContext.FluidHandling.NONE, player));
+                if (raw instanceof BlockHitResult bh) {
+                    hitInfo = String.format("miss(sign) hit=%s side=%s", bh.getBlockPos(), bh.getSide());
+                } else {
+                    hitInfo = "no-block(" + raw.getType() + ")";
+                }
+            } else {
+                hitInfo = String.format("OK side=%s", hit.getSide());
+            }
+            LOGGER.info(String.format(
+                    "QAB diag sign=%s dist=%.2f reach=%.2f calcYaw=%.2f calcPitch=%.2f "
+                            + "playerYaw=%.2f playerPitch=%.2f headYaw=%.2f %s",
+                    signPos, eye.distanceTo(signCenter), reach, calcYaw, calcPitch,
+                    player.getYaw(), player.getPitch(), player.headYaw, hitInfo));
+        }
+
         if (hit == null) {
             // 视线被挡或超距：给若干 tick 重试机会，超时则放弃该目标避免队列卡死
             if (++aimTicks >= MAX_AIM_TICKS) {
@@ -121,6 +155,7 @@ public final class QShopBuyCondition implements NavigationCondition {
 
         // 5) 满足条件：执行购买副作用（一次性）
         if (triggered.compareAndSet(false, true)) {
+            LOGGER.info("QAB buying at {} side={}", signPos, hit.getSide());
             performPurchase(client, hit.getSide());
         }
         return true;
@@ -138,7 +173,7 @@ public final class QShopBuyCondition implements NavigationCondition {
         double dz = target.z - eye.z;
         double horizontal = Math.sqrt(dx * dx + dz * dz);
 
-        float yaw = (float) (MathHelper.atan2(dz, dx) * (180.0 / Math.PI)) - 90.0F;
+        float yaw = (float) (MathHelper.atan2(-dx, dz) * (180.0 / Math.PI));
         float pitch = (float) (-(MathHelper.atan2(dy, horizontal) * (180.0 / Math.PI)));
 
         player.setYaw(yaw);
@@ -149,9 +184,9 @@ public final class QShopBuyCondition implements NavigationCondition {
     }
 
     /**
-     * 从玩家眼睛向告示牌中心做射线检测，确认命中的正是目标告示牌。
+     * 从玩家眼睛向牌子中心做射线检测，确认视线能命中目标告示牌（任意面均可）。
      *
-     * @return 命中目标告示牌时返回命中结果（含命中面）；被遮挡或未命中返回 null
+     * @return 命中目标告示牌时返回命中结果（含命中的那一面）；被遮挡或未命中返回 null
      */
     private BlockHitResult raycastToSign(MinecraftClient client,
                                          ClientPlayerEntity player,
