@@ -1,5 +1,6 @@
 package com.billy65536.qab.integration;
 
+import com.billy65536.chunkscanner.api.DatabaseApi;
 import com.billy65536.chunkscanner.components.analyzer.QShopDbAdapter;
 import com.billy65536.chunkscanner.core.IChunkDb;
 import com.billy65536.chunkscanner.core.db.DbPackage;
@@ -19,18 +20,24 @@ import java.nio.file.Path;
  *
  * <h3>加载流程</h3>
  * <ol>
- *   <li>构造时 {@link DbPackage#open(Path)} 解析 ZIP 内的 metadata.json（不校验、不解压）；</li>
+ *   <li>构造时 {@link DatabaseApi#openPackage(Path)} 解析 ZIP 内的 metadata.json（不校验、不解压）；</li>
  *   <li>调用 {@link #validate()} 校验 metadata 字段合法性与文件 SHA-256 完整性；</li>
- *   <li>调用 {@link #load()}：{@link DbPackage#load(Path, boolean)} 解压并还原 {@link IChunkDb} 实例；</li>
+ *   <li>调用 {@link #load()}：解压并还原 {@link IChunkDb} 实例；</li>
  *   <li>通过 {@link QShopDbAdapter} 读取全部 QShop 记录（自动合并子库增强数据）；</li>
  *   <li>逐条映射为 {@link ShopExportEntry} 并聚合到 {@link ShopExportData}。</li>
  * </ol>
  *
  * <h3>设计原则</h3>
- * 完全不依赖 {@code BinaryChunkDb} 等具体实现类。{@link DbPackage} 通过 metadata.json 的
- * {@code databaseType} 字段自动路由到对应的 {@link IChunkDb.FactoryRegistry} 工厂。
+ * 包的打开、校验与加载统一走 chunkscanner 公共 API（{@link DatabaseApi}），
+ * 完全不依赖 {@code BinaryChunkDb} 等具体实现类：导出包通过 metadata.json 的
+ * {@code databaseType} 字段自动路由到对应的数据库工厂。
  *
- * @see DbPackage
+ * <p><b>已知的非公共依赖</b>：{@link QShopDbAdapter} 位于 chunkscanner 的
+ * {@code components} 包，不属于其公共 API 契约，可能随版本调整。
+ * 它是 QShop 数据的专用解码器，目前公共 API 未提供等价能力，
+ * 故暂时保留直接依赖；升级 chunkscanner 时需重点回归此处。</p>
+ *
+ * @see DatabaseApi
  * @see QShopDbAdapter
  * @see ShopExportData
  */
@@ -44,7 +51,7 @@ public class CsQShopDbLoader {
 
     /**
      * 打开 chunkscanner 导出 ZIP 并解析 metadata。
-     * <p>{@link DbPackage#open(Path)} 仅解析 metadata.json，不校验也不解压。
+     * <p>{@link DatabaseApi#openPackage(Path)} 仅解析 metadata.json，不校验也不解压。
      *
      * @param zipPath 导出 ZIP 文件路径
      * @throws IOException              文件不存在或 metadata 缺失/可读性错误
@@ -52,7 +59,7 @@ public class CsQShopDbLoader {
      */
     public CsQShopDbLoader(Path zipPath) throws IOException, IllegalArgumentException {
         this.zipPath = zipPath;
-        this.pkg = DbPackage.open(zipPath);
+        this.pkg = DatabaseApi.openPackage(zipPath);
     }
 
     /** @return 原始导出 ZIP 文件路径 */

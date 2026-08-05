@@ -1,5 +1,6 @@
 package com.billy65536.qab.integration;
 
+import com.billy65536.chunkscanner.api.NavigationApi;
 import com.billy65536.chunkscanner.core.navigation.ChunkScannerNavigation;
 import com.billy65536.chunkscanner.core.navigation.NavigationEntry;
 import com.billy65536.qab.config.QabConfig;
@@ -12,26 +13,63 @@ import org.slf4j.LoggerFactory;
 
 
 /**
- * 将 QAB 购物计划接入 chunkscanner 导航门面，实现"按规划自动寻路 + 到达自动购买"。
+ * 将 QAB 购物计划接入 chunkscanner 导航，实现"按规划自动寻路 + 到达自动购买"。
+ *
+ * <p>使用 chunkscanner 公共 API 的<b>独立导航实例</b>（{@code NavigationApi.createNavigation}），
+ * 而非全局共享队列，因此 QAB 的购物路线与玩家自己的 {@code /cs nav} 队列互不干扰，
+ * 也不会被对方清空。实例已注册 tick 托管，由 chunkscanner 每 tick 自动推进。</p>
  *
  * <p>调用 {@link #applyPlan(ShoppingPlan, QabConfig)} 时：
  * <ol>
+ *   <li>清空上一轮遗留的队列（同一时刻只跑一份购物计划）；</li>
  *   <li>解析每条 {@link PlanEntry#getPosition()}（格式 {@code dimension(x,y,z)}）；</li>
- *   <li>构造 {@link NavigationEntry} + {@link QShopBuyCondition}（携带购买总量与配置）；</li>
- *   <li>逐条 {@link ChunkScannerNavigation#enqueue(NavigationEntry, com.billy65536.chunkscanner.core.navigation.NavigationCondition) 入队}；</li>
- *   <li>最后 {@link ChunkScannerNavigation#start() 启动}导航。</li>
+ *   <li>构造 {@link NavigationEntry} + {@link QShopBuyCondition}（携带购买总量与配置）并入队；</li>
+ *   <li>最后启动导航。</li>
  * </ol>
  *
- * 维度切换由 chunkscanner 导航门面自动暂停/恢复。
+ * <p>维度切换由 chunkscanner 导航自动暂停/恢复。</p>
+ *
+ * <p><b>注意</b>：Baritone 路径执行是全局唯一资源。若玩家同时启动了 {@code /cs nav}，
+ * 两边会互相抢占寻路目标。{@link #stop()} 可随时中止 QAB 侧导航。</p>
  */
 public final class CsNavigationHelper {
     private static final Logger LOGGER = LoggerFactory.getLogger("qab.nav");
+
+    /** 独立导航实例名称，用于日志与回退路径点分组隔离。 */
+    private static final String NAV_NAME = "qab";
+
+    /** QAB 专属导航实例（懒初始化，首次使用时创建并注册 tick 托管）。 */
+    private static volatile ChunkScannerNavigation navigation;
 
     private CsNavigationHelper() {
     }
 
     /**
+     * 获取（必要时创建）QAB 专属的独立导航实例。
+     *
+     * <p>首次调用时创建实例并注册到 chunkscanner 的 tick 托管器，
+     * 之后由 chunkscanner 每 tick 自动推进队列，无需 QAB 自行挂钩事件。</p>
+     */
+    public static ChunkScannerNavigation navigation() {
+        ChunkScannerNavigation nav = navigation;
+        if (nav == null) {
+            synchronized (CsNavigationHelper.class) {
+                nav = navigation;
+                if (nav == null) {
+                    nav = NavigationApi.createNavigation(NAV_NAME);
+                    NavigationApi.manageTick(nav);
+                    navigation = nav;
+                    LOGGER.info("QAB navigation instance created and managed by chunkscanner.");
+                }
+            }
+        }
+        return nav;
+    }
+
+    /**
      * 将计划中的全部目标入队并启动导航。
+     *
+     * <p>会先清空本实例上一轮遗留的队列，确保同一时刻只执行一份购物计划。</p>
      *
      * @param plan   购物计划（含 position + 购买量）
      * @param config QAB 配置（延时、命令模板、可点击距离）
@@ -42,7 +80,10 @@ public final class CsNavigationHelper {
             return 0;
         }
 
-        ChunkScannerNavigation nav = ChunkScannerNavigation.get();
+        ChunkScannerNavigation nav = navigation();
+        // 清空上一轮残留目标，避免新旧计划混在同一队列里执行
+        nav.clear();
+
         int queued = 0;
         for (PlanEntry entry : plan.getPlan()) {
             ParsedPos pp = parsePosition(entry.getPosition());
@@ -69,6 +110,44 @@ public final class CsNavigationHelper {
             LOGGER.info("QAB navigation applied: {} target(s) queued.", queued);
         }
         return queued;
+    }
+
+    /**
+     * 中止 QAB 导航并清空其队列。
+     *
+     * <p>不影响玩家自己的 {@code /cs nav} 全局队列。</p>
+     *
+     * @return 被清空的剩余目标数
+     */
+    public static int stop() {
+        ChunkScannerNavigation nav = navigation;
+        if (nav == null) return 0;
+        int remaining = nav.size();
+        nav.stop();
+        LOGGER.info("QAB navigation stopped, {} target(s) discarded.", remaining);
+        return remaining;
+    }
+
+    /** QAB 导航队列中剩余的目标数。 */
+    public static int size() {
+        ChunkScannerNavigation nav = navigation;
+        return nav == null ? 0 : nav.size();
+    }
+
+    /** QAB 导航是否正在进行。 */
+    public static boolean isActive() {
+        ChunkScannerNavigation nav = navigation;
+        return nav != null && nav.isActive();
+    }
+
+    /**
+     * Baritone 是否可用。
+     *
+     * <p>为 {@code false} 时 chunkscanner 会降级为创建 Xaero 路径点，
+     * 玩家需自行前往，自动购买仍会在到达后触发。</p>
+     */
+    public static boolean isBaritoneAvailable() {
+        return NavigationApi.isBaritoneAvailable();
     }
 
     /**

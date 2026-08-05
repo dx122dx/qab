@@ -1,5 +1,6 @@
 package com.billy65536.qab;
 
+import com.billy65536.chunkscanner.api.DatabaseApi;
 import com.billy65536.chunkscanner.core.db.DbValidationResult;
 import com.billy65536.qab.config.BlockMappingConfig;
 import com.billy65536.qab.config.QabConfig;
@@ -46,7 +47,8 @@ public class QabCommands {
     private static final Logger LOGGER = LoggerFactory.getLogger("qab/commands");
 
     private static final Path GAME_DIR = FabricLoader.getInstance().getGameDir();
-    private static final Path CS_EXPORT_DIR = GAME_DIR.resolve("chunkscanner").resolve("export");
+    /** chunkscanner 导出目录，由其公共 API 提供，避免硬编码路径结构。 */
+    private static final Path CS_EXPORT_DIR = DatabaseApi.exportDir();
     private static final Path SCHEMATICS_DIR = GAME_DIR.resolve("schematics");
     private static final Path QAB_DIR = GAME_DIR.resolve("qab");
     private static final Path QAB_LIST_DIR = QAB_DIR.resolve("list");
