@@ -1,0 +1,104 @@
+name: Publish
+
+# 推送 git tag（形如 v1.0.0 / v1.0.0-dev / v1.0.0-beta.1）时自动构建并发布到
+# GitHub Release 与 Modrinth。版本号以 tag 为唯一真相源，CI 注入 gradle.properties 后构建。
+# qab 依赖 chunkscanner（flatDir），故先构建 chunkscanner 再构建 qab。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    environment:
+      name: 'Minecraft mod publish'
+
+    steps:
+      - name: checkout qab repository
+        uses: actions/checkout@v6
+        with:
+          path: qab
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: checkout chunkscanner (dependency)
+        uses: actions/checkout@v6
+        with:
+          repository: dx122dx/chunkscanner
+          ref: dev
+          path: chunkscanner
+
+      - name: validate gradle wrapper
+        uses: gradle/actions/wrapper-validation@v6
+
+      - name: setup jdk
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: make gradle wrapper executable
+        run: |
+          chmod +x qab/gradlew
+          chmod +x chunkscanner/gradlew
+
+      - name: Derive version & channel from tag
+        id: meta
+        working-directory: qab
+        run: |
+          TAG="${GITHUB_REF_NAME}"          # 例如 v1.0.0 / v1.0.0-dev
+          VERSION="${TAG#v}"                # 去掉前缀 v -> 1.0.0
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" == *alpha* || "$TAG" == *dev* ]]; then VT=alpha
+          elif [[ "$TAG" == *beta* || "$TAG" == *rc* ]]; then VT=beta
+          else VT=release; fi
+          echo "version_type=$VT" >> "$GITHUB_OUTPUT"
+
+      - name: Apply version to qab gradle.properties
+        working-directory: qab
+        run: sed -i "s/^mod_version=.*/mod_version=${{ steps.meta.outputs.version }}/" gradle.properties
+
+      - name: build chunkscanner
+        working-directory: chunkscanner
+        run: ./gradlew build --no-daemon
+
+      - name: build qab
+        working-directory: qab
+        run: ./gradlew build --no-daemon
+
+      - name: Generate changelog from commits
+        working-directory: qab
+        run: |
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -n "$PREV" ]; then
+            git log --no-merges --pretty=format:"- %s (%h)" "$PREV..HEAD" > changelog_gen.md
+          else
+            git log --no-merges --pretty=format:"- %s (%h)" > changelog_gen.md
+          fi
+
+      - name: Publish to Modrinth & GitHub Release
+        uses: Kira-NT/mc-publish@v3.3.0
+        with:
+          # Modrinth —— 需在仓库 Settings > Secrets and variables 配置：
+          #   vars.MODRINTH_ID       = Modrinth 项目 slug 或 id
+          #   secrets.MODRINTH_TOKEN = Modrinth API Token
+          modrinth-id: ${{ vars.MODRINTH_ID }}
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+          # 元数据（version 带 v 前缀，与 git tag 一致；mod 内部版本不含 v）
+          name: QShop Auto Buy ${{ steps.meta.outputs.version }}
+          version: ${{ steps.meta.outputs.tag }}
+          version-type: ${{ steps.meta.outputs.version_type }}
+
+          game-versions: "1.20.1"
+          loaders: fabric
+          changelog-file: qab/changelog_gen.md
+
+          # 仅上传主 jar，排除 -sources
+          files: qab/build/libs/!(*-sources).jar
