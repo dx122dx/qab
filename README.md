@@ -1,9 +1,204 @@
-# QShop Auto Buy
+# QShop Auto Buy (QAB)
 
-## Setup
+> QShop 自动购买辅助客户端模组 —— 基于 [Chunk Scanner](https://github.com/dx122dx/chunkscanner) 的扫描数据，自动规划并导航购买。
 
-For setup instructions, please see the [Fabric Documentation page](https://docs.fabricmc.net/develop/getting-started/creating-a-project#setting-up) related to the IDE that you are using.
+QAB 是一个 Fabric 客户端模组，工作于 Minecraft 1.20.1。它读取 Chunk Scanner 导出的 QShop 商店数据库，结合购物清单（可由原理图自动生成）计算出最优购买方案，并通过 Chunk Scanner 的导航门面自动寻路到各家商店、到达后自动执行购买命令。
 
-## License
+## 功能概览
 
-This template is available under the CC0 license. Feel free to learn from it and incorporate it in your own projects.
+- **原理图 → 购物清单**：解析 `.litematic` / `.schem` / `.schematic` / `.nbt` 原理图，统计所需方块并生成清单（支持倍率、冗余、排除、排序等）。
+- **清单 + 商店数据库 → 购买计划**：贪心算法按单价从低到高分配购买量，自动计算总成本，并标记无法满足的需求与冗余缺口。
+- **计划 → 自动购买**：按计划逐店自动寻路（依赖 Chunk Scanner 导航，支持跨维度），到达告示牌后自动执行购买命令。
+
+## 依赖
+
+| 依赖 | 说明 |
+| --- | --- |
+| Minecraft | 1.20.1，客户端环境（environment = client） |
+| Fabric Loader | >= 0.14.24 |
+| Fabric API | 任意版本 |
+| Java | >= 17 |
+| Chunk Scanner | >= 1.1.0-dev-20260802.4（提供 QShop 数据库与导航门面） |
+| schematic4j | 1.1.0（原理图解析，已 include 进 jar） |
+
+> Chunk Scanner 的版本号由 `build.gradle` 自动从 `../chunkscanner/gradle.properties` 读取，无需手动同步。请保持 qab 与 chunkscanner 的相对目录位置（`../chunkscanner`），或在 `gradle.properties` 中调整 `chunkscanner_default_version` 兜底值。
+
+## 构建
+
+```bash
+# 先构建 Chunk Scanner，使本地依赖可用
+cd ../chunkscanner && sh ./gradlew build
+
+# 再构建 QAB
+cd ../qab && sh ./gradlew build
+```
+
+产物位于 `build/libs/`。
+
+## 使用流程
+
+完整的购买流程分为三步：选择数据库 → 生成/选择清单 → 生成计划 →（可选）自动执行。
+
+### 1. 选择 QShop 数据库
+
+数据库来自 Chunk Scanner 的导出 ZIP，默认位于游戏目录的 `chunkscanner/export/`：
+
+```
+/qab select db <文件名>
+```
+
+`<文件名>` 支持 Tab 自动补全（不含 `.zip` 后缀）。选择后会校验元数据与文件完整性，并报错/警告。
+
+### 2. 生成或选择购物清单
+
+**方式 A：从原理图生成**（推荐）
+
+```
+/qab generate list <原理图名> [配置...]
+```
+
+原理图默认放在游戏目录的 `schematics/`，支持自动补全。生成后自动选中该清单。
+
+可选 `key=value` 配置（空格分隔，未知键/非法值仅告警）：
+
+| 键 | 含义 | 默认 |
+| --- | --- | --- |
+| `name` | 清单名称 | 原理图文件名 |
+| `desc` / `description` | 清单描述 | 自动生成 |
+| `redundancy` | 每项额外冗余量 | 0 |
+| `out` / `output` | 输出文件名（不含 .json） | 同 name |
+| `multiplier` / `mult` | 数量倍率 | 1.0 |
+| `min` | 单项最小数量（低于则提升到该值） | 不限制 |
+| `threshold` | 单项数量阈值（低于则丢弃） | 1 |
+| `blockentity` / `blockentities` | 是否统计方块实体 | false |
+| `rawid` / `raw` | 保留原始方块 ID（不做方块→物品映射，调试用） | false |
+| `exclude` / `excludes` | 排除的方块 ID，逗号分隔，支持 `*` 通配，可多次出现 | 无 |
+| `sort` | `count`（数量降序，默认）/ `id`（ID 升序） | count |
+
+示例：
+
+```
+/qab generate list my_house redundancy=64 multiplier=2 exclude=air,*_sign sort=id
+```
+
+流体、火、活塞头等无法购买的方块会从清单剔除，并在聊天栏提示数量。
+
+**方式 B：使用已有清单**
+
+```
+/qab select list <清单名>
+```
+
+清单默认位于游戏目录的 `qab/list/`，支持自动补全（不含 `.json` 后缀）。
+
+### 3. 生成购买计划
+
+```
+/qab plan [计划名]
+```
+
+计划写入游戏目录的 `qab/plan/<计划名>.json`（默认按时间戳命名）。回显包含计划条目数、总成本、失败项数与警告项数。规划算法：
+
+1. 为每个清单项查找所有匹配的售卖模式商店；
+2. 按单价升序排序，从最便宜的商店贪心分配；
+3. `count`（必需量）优先满足，`redundancy`（冗余量）其次；
+4. 必需量未满足 → 记入 `failed`；冗余量未满足 → 记入 `warn`。
+
+匹配条件支持：物品 ID、附魔（`enchant`）、NBT 匹配（`matchNbt`）、最高可承受价格（`maxAffordable`）。
+
+### 4. 自动寻路并购买
+
+```
+/qab nav apply <计划名>
+```
+
+依计划逐店入队并启动导航（维度切换由 Chunk Scanner 导航自动暂停/恢复）。到达告示牌后，按配置延时执行购买命令。可直接传入 `qab/plan/` 下的文件名（不含 `.json`），或完整路径。
+
+## 配置文件
+
+### `config/qab/qab.json`
+
+QAB 运行时配置（文件不存在时使用默认值）：
+
+| 字段 | 说明 | 默认 |
+| --- | --- | --- |
+| `buyDelayMs` | 到达告示牌后、发送购买命令前的等待毫秒数 | 500 |
+| `buyCommand` | 到达后执行的购买命令模板，`{count}` 被替换为计划购买总量 | `/qs amount {count}` |
+| `clickReachDist` | 判定"准星可点击到告示牌"的最大距离（方块） | 5.0 |
+
+示例：
+
+```json
+{
+  "buyDelayMs": 500,
+  "buyCommand": "/qs amount {count}",
+  "clickReachDist": 5.0
+}
+```
+
+### `config/qab/block-mapping.json`
+
+方块 → 物品映射配置，覆盖内置默认表（每次 `/qab generate list` 时实时重新加载，改 JSON 无需重启）：
+
+- `unobtainable`：无法购买的方块 ID 列表（流体、火、活塞头等），取内置与配置的并集；
+- `irregular`：不规则单映射 `方块ID: 物品ID`，按 key 覆盖内置并可追加；
+- `composite`：组合方块 `方块ID: [物品ID, ...]`。
+
+文件不存在或解析失败时回退内置默认表并告警。
+
+## 文件结构与路径约定
+
+| 路径 | 用途 |
+| --- | --- |
+| `chunkscanner/export/*.zip` | Chunk Scanner 导出的 QShop 数据库（select db 来源） |
+| `schematics/` | 原理图文件（generate list 来源） |
+| `qab/list/*.json` | 购物清单 |
+| `qab/plan/*.json` | 购买计划 |
+| `config/qab/qab.json` | 运行时配置 |
+| `config/qab/block-mapping.json` | 方块→物品映射配置 |
+
+## 数据格式
+
+**购物清单**（`qab/list/*.json`）：
+
+```json
+{
+  "version": 1,
+  "name": "my_house",
+  "description": "Generated from my_house.litematic ...",
+  "redundancy": 0,
+  "items": [
+    { "id": "minecraft:stone", "count": 64 },
+    { "id": "minecraft:oak_planks", "count": 32, "enchant": {"minecraft:unbreaking": 3} }
+  ]
+}
+```
+
+**购买计划**（`qab/plan/*.json`）：
+
+```json
+{
+  "version": 1,
+  "totalCost": 123.0,
+  "failed": [ { "item": { "id": "minecraft:diamond", "count": 5 }, "count": 5, "redundancy": 0 } ],
+  "warn": [],
+  "plan": [
+    { "position": "minecraft:overworld(12,65,-13)", "count": 64, "redundancy": 0 }
+  ]
+}
+```
+
+## 模块结构
+
+- `config`：运行时配置（`QabConfig`）与方块映射配置（`BlockMappingConfig`）。
+- `generator`：原理图解析与清单生成（`SchematicListGenerator` / `BlockItemResolver` / `ListGenConfig`）。
+- `integration`：对接 Chunk Scanner（数据库加载 `CsQShopDbLoader`、导航 `CsNavigationHelper`、购买触发 `QShopBuyCondition`）。
+- `planner`：购物规划与领域模型（`ShoppingPlanner` 及 `model` 包）。
+
+## 许可证
+
+AGPL-3.0-only
+
+## 作者
+
+billy65536
