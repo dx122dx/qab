@@ -14,6 +14,7 @@ import com.billy65536.qab.planner.model.ShoppingList;
 import com.billy65536.qab.planner.model.ShoppingPlan;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
@@ -23,6 +24,9 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.command.CommandSource;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.BlockPos;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -182,7 +186,17 @@ public class QabCommands {
                             .then(argument("file", StringArgumentType.string())
                                     .suggests(PLAN_SUGGESTIONS)
                                     .executes(ctx -> execNavApply(ctx,
-                                            StringArgumentType.getString(ctx, "file")))));
+                                            StringArgumentType.getString(ctx, "file")))))
+                    .then(literal("stop").executes(QabCommands::execNavStop));
+
+            // /qab stash add|remove|list —— 存货点管理（用当前站立坐标增删，免手写 JSON）
+            var stash = literal("stash")
+                    .then(literal("add").executes(QabCommands::execStashAdd))
+                    .then(literal("list").executes(QabCommands::execStashList))
+                    .then(literal("remove")
+                            .then(argument("index", IntegerArgumentType.integer(1))
+                                    .executes(ctx -> execStashRemove(ctx,
+                                            IntegerArgumentType.getInteger(ctx, "index")))));
 
             // /qab generate list <file> [config...]
             // config 格式: key=value [key=value ...]
@@ -200,6 +214,7 @@ public class QabCommands {
             root.then(select);
             root.then(plan);
             root.then(nav);
+            root.then(stash);
             root.then(generate);
 
             dispatcher.register(root);
@@ -504,6 +519,15 @@ public class QabCommands {
             return 0;
         }
 
+        // 格式版本校验：版本 1 的计划没有 itemId，无法查堆叠上限做背包容量预判，
+        // 而 QShop 在背包不足时会拒绝发货，硬跑只会买了个寂寞。必须重新生成。
+        if (!plan.isBuyable()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_outdated",
+                    target.getFileName().toString(),
+                    plan.getVersion(), ShoppingPlan.FORMAT_VERSION));
+            return 0;
+        }
+
         QabConfig config = QabConfig.load();
         int queued = CsNavigationHelper.applyPlan(plan, config);
         if (queued <= 0) {
@@ -516,6 +540,97 @@ public class QabCommands {
                 target.getFileName().toString(), queued, config.getBuyCommand()));
         LOGGER.info("Nav apply started from {}: {} target(s), buy command='{}'",
                 target, queued, config.getBuyCommand());
+        return 1;
+    }
+
+    // ---- nav stop: 中止自动购买 ----
+    private static int execNavStop(CommandContext<FabricClientCommandSource> ctx) {
+        if (!CsNavigationHelper.isActive()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.nav_stop_idle"));
+            return 0;
+        }
+        int remaining = CsNavigationHelper.stop();
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.nav_stop_done", remaining)
+                .formatted(Formatting.YELLOW));
+        return 1;
+    }
+
+    // ---- stash add: 把当前站立位置记为存货点 ----
+    private static int execStashAdd(CommandContext<FabricClientCommandSource> ctx) {
+        var player = ctx.getSource().getPlayer();
+        var world = ctx.getSource().getWorld();
+        if (player == null || world == null) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.stash_no_player"));
+            return 0;
+        }
+
+        // 记录玩家<b>准星所指</b>的方块；没指向方块则退回脚下坐标。
+        // 存货点应当是箱子本身的坐标，而不是玩家站的地方。
+        BlockPos pos;
+        HitResult hit = player.raycast(6.0, 0.0F, false);
+        if (hit instanceof BlockHitResult blockHit && hit.getType() == HitResult.Type.BLOCK) {
+            pos = blockHit.getBlockPos();
+        } else {
+            ctx.getSource().sendError(Text.translatable("qab.msg.stash_add_no_target"));
+            return 0;
+        }
+
+        String dimensionId = world.getRegistryKey().getValue().toString();
+        String position = CsNavigationHelper.formatPosition(
+                dimensionId, pos.getX(), pos.getY(), pos.getZ());
+
+        QabConfig config = QabConfig.load();
+        if (!config.addStashPosition(position)) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.stash_add_duplicate", position));
+            return 0;
+        }
+        if (!config.save()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.stash_save_failed",
+                    QabConfig.CONFIG_FILE.toString()));
+            return 0;
+        }
+
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.stash_add_done",
+                position, config.getStashPositions().size()).formatted(Formatting.GREEN));
+        return 1;
+    }
+
+    // ---- stash list: 列出所有存货点 ----
+    private static int execStashList(CommandContext<FabricClientCommandSource> ctx) {
+        QabConfig config = QabConfig.load();
+        List<String> positions = config.getStashPositions();
+        if (positions.isEmpty()) {
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.stash_list_empty")
+                    .formatted(Formatting.GRAY));
+            return 1;
+        }
+
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.stash_list_header",
+                positions.size()).formatted(Formatting.AQUA));
+        for (int i = 0; i < positions.size(); i++) {
+            ctx.getSource().sendFeedback(Text.literal("  " + (i + 1) + ". " + positions.get(i))
+                    .formatted(Formatting.GRAY));
+        }
+        return 1;
+    }
+
+    // ---- stash remove: 按序号移除存货点 ----
+    private static int execStashRemove(CommandContext<FabricClientCommandSource> ctx, int index) {
+        QabConfig config = QabConfig.load();
+        // 命令里的序号从 1 开始，与 /qab stash list 的显示一致
+        String removed = config.removeStashPositionAt(index - 1);
+        if (removed == null) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.stash_remove_bad_index",
+                    index, config.getStashPositions().size()));
+            return 0;
+        }
+        if (!config.save()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.stash_save_failed",
+                    QabConfig.CONFIG_FILE.toString()));
+            return 0;
+        }
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.stash_remove_done",
+                removed, config.getStashPositions().size()).formatted(Formatting.YELLOW));
         return 1;
     }
 

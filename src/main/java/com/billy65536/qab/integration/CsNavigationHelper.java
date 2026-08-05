@@ -2,30 +2,25 @@ package com.billy65536.qab.integration;
 
 import com.billy65536.chunkscanner.api.NavigationApi;
 import com.billy65536.chunkscanner.core.navigation.ChunkScannerNavigation;
-import com.billy65536.chunkscanner.core.navigation.NavigationEntry;
+import com.billy65536.qab.automatic.ShoppingRunner;
 import com.billy65536.qab.config.QabConfig;
-import com.billy65536.qab.planner.model.PlanEntry;
 import com.billy65536.qab.planner.model.ShoppingPlan;
 
-import net.minecraft.util.math.BlockPos;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-
 /**
- * 将 QAB 购物计划接入 chunkscanner 导航，实现"按规划自动寻路 + 到达自动购买"。
+ * QAB 购买导航实例的持有者与对外门面。
  *
  * <p>使用 chunkscanner 公共 API 的<b>独立导航实例</b>（{@code NavigationApi.createNavigation}），
  * 而非全局共享队列，因此 QAB 的购物路线与玩家自己的 {@code /cs nav} 队列互不干扰，
  * 也不会被对方清空。实例已注册 tick 托管，由 chunkscanner 每 tick 自动推进。</p>
  *
- * <p>调用 {@link #applyPlan(ShoppingPlan, QabConfig)} 时：
- * <ol>
- *   <li>清空上一轮遗留的队列（同一时刻只跑一份购物计划）；</li>
- *   <li>解析每条 {@link PlanEntry#getPosition()}（格式 {@code dimension(x,y,z)}）；</li>
- *   <li>构造 {@link NavigationEntry} + {@link QShopBuyCondition}（携带购买总量与配置）并入队；</li>
- *   <li>最后启动导航。</li>
- * </ol>
+ * <h3>与 {@link ShoppingRunner} 的分工</h3>
+ * <p>本类只负责<b>持有导航实例</b>与提供查询/中止入口；具体的「按计划逐店购买」
+ * 由 {@link ShoppingRunner} 编排。原因是要支持「买不完就把剩余量回插队列」，
+ * 必须由 QAB 自己持有待办队列、一次只向导航投递一个目标 ——
+ * chunkscanner 的 {@code clear()} 等同 {@code stop()}，没有插队/移除单目标的 API。</p>
  *
  * <p>维度切换由 chunkscanner 导航自动暂停/恢复。</p>
  *
@@ -67,77 +62,52 @@ public final class CsNavigationHelper {
     }
 
     /**
-     * 将计划中的全部目标入队并启动导航。
+     * 获取已创建的导航实例，<b>不触发创建</b>。
      *
-     * <p>会先清空本实例上一轮遗留的队列，确保同一时刻只执行一份购物计划。</p>
+     * <p>供 {@link ShoppingRunner} 在停止/查询路径上使用，避免只是想中止却先建出一个实例。</p>
      *
-     * @param plan   购物计划（含 position + 购买量）
-     * @param config QAB 配置（延时、命令模板、可点击距离）
-     * @return 成功入队的目标数量（解析失败的目标会被跳过并记录）
+     * @return 尚未创建时返回 null
+     */
+    public static ChunkScannerNavigation navigationIfPresent() {
+        return navigation;
+    }
+
+    /**
+     * 按计划开始自动购买（寻路 + 到店购买 + 容量不足时自动存货）。
+     *
+     * @param plan   购物计划（须为可购买格式，调用方先校验 {@link ShoppingPlan#isBuyable()}）
+     * @param config QAB 配置
+     * @return 成功入队的目标数量（坐标解析失败的目标会被跳过并记录）
      */
     public static int applyPlan(ShoppingPlan plan, QabConfig config) {
         if (plan == null || plan.getPlan() == null || plan.getPlan().isEmpty()) {
             return 0;
         }
-
-        ChunkScannerNavigation nav = navigation();
-        // 清空上一轮残留目标，避免新旧计划混在同一队列里执行
-        nav.clear();
-
-        int queued = 0;
-        for (PlanEntry entry : plan.getPlan()) {
-            ParsedPos pp = parsePosition(entry.getPosition());
-            if (pp == null) {
-                LOGGER.warn("Skipping plan entry with unparseable position: {}", entry.getPosition());
-                continue;
-            }
-            int buyCount = entry.getTotal(); // count + redundancy
-
-            BlockPos signPos = new BlockPos(pp.x, pp.y, pp.z);
-            // 导航目标即告示牌方块格本身：Baritone 会停在它相邻的某个可站立格
-            // （地面牌→牌下方地面，墙牌→牌前方地面，悬空牌→相邻可站格）。
-            // 不假设"牌前固定一格"，因为牌子可能在墙上/柱上/半空，没有通用的前方落点。
-            // 是否能点到由 QShopBuyCondition 按"距离 + 视线命中"判定。
-            NavigationEntry navEntry = new NavigationEntry(
-                    pp.dimensionId, pp.x, pp.y, pp.z);
-            QShopBuyCondition cond = new QShopBuyCondition(signPos, buyCount, config);
-            nav.enqueue(navEntry, cond);
-            queued++;
-        }
-
-        if (queued > 0) {
-            nav.start();
-            LOGGER.info("QAB navigation applied: {} target(s) queued.", queued);
-        }
-        return queued;
+        return ShoppingRunner.getInstance().start(plan, config);
     }
 
     /**
-     * 中止 QAB 导航并清空其队列。
+     * 中止 QAB 购买流程（含存货子流程）并清空队列。
      *
      * <p>不影响玩家自己的 {@code /cs nav} 全局队列。</p>
      *
      * @return 被清空的剩余目标数
      */
     public static int stop() {
-        ChunkScannerNavigation nav = navigation;
-        if (nav == null) return 0;
-        int remaining = nav.size();
-        nav.stop();
-        LOGGER.info("QAB navigation stopped, {} target(s) discarded.", remaining);
+        int remaining = ShoppingRunner.getInstance().remaining();
+        ShoppingRunner.getInstance().stop();
+        LOGGER.info("QAB shopping stopped, {} target(s) discarded.", remaining);
         return remaining;
     }
 
-    /** QAB 导航队列中剩余的目标数。 */
+    /** 剩余待购买的目标数。 */
     public static int size() {
-        ChunkScannerNavigation nav = navigation;
-        return nav == null ? 0 : nav.size();
+        return ShoppingRunner.getInstance().remaining();
     }
 
-    /** QAB 导航是否正在进行。 */
+    /** QAB 购买流程是否正在进行。 */
     public static boolean isActive() {
-        ChunkScannerNavigation nav = navigation;
-        return nav != null && nav.isActive();
+        return ShoppingRunner.getInstance().isRunning();
     }
 
     /**
@@ -159,7 +129,7 @@ public final class CsNavigationHelper {
      * @param position 位置字符串
      * @return 解析结果，格式非法时返回 null
      */
-    static ParsedPos parsePosition(String position) {
+    public static ParsedPos parsePosition(String position) {
         if (position == null || position.isEmpty()) return null;
         int open = position.indexOf('(');
         int close = position.lastIndexOf(')');
@@ -182,10 +152,19 @@ public final class CsNavigationHelper {
         }
     }
 
+    /**
+     * 把维度与坐标格式化为位置字符串 {@code dimension(x,y,z)}。
+     *
+     * <p>与 {@link #parsePosition(String)} 互逆，供 {@code /qab stash add} 记录当前位置。</p>
+     */
+    public static String formatPosition(String dimensionId, int x, int y, int z) {
+        return dimensionId + "(" + x + "," + y + "," + z + ")";
+    }
+
     /** 解析后的位置。 */
-    static final class ParsedPos {
-        final String dimensionId;
-        final int x, y, z;
+    public static final class ParsedPos {
+        public final String dimensionId;
+        public final int x, y, z;
 
         ParsedPos(String dimensionId, int x, int y, int z) {
             this.dimensionId = dimensionId;

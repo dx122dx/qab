@@ -104,7 +104,9 @@ public class ShoppingPlanner {
             needed -= (takeCount + takeRedundancy);
 
             if (takeCount > 0 || takeRedundancy > 0) {
-                plan.addPlanEntry(new PlanEntry(shop.getPositionString(), takeCount, takeRedundancy));
+                // itemId 用于自动购买时查询堆叠上限做背包容量预判（格式版本 2 起必填）
+                plan.addPlanEntry(new PlanEntry(shop.getPositionString(), shop.getItemId(),
+                        takeCount, takeRedundancy));
                 plan.addCost(shop.getRealPrice() * (takeCount + takeRedundancy));
             }
         }

@@ -114,6 +114,15 @@ cd ../qab && sh ./gradlew build
 
 依计划逐店入队并启动导航（维度切换由 Chunk Scanner 导航自动暂停/恢复）。到达告示牌后，按配置延时执行购买命令。可直接传入 `qab/plan/` 下的文件名（不含 `.json`），或完整路径。
 
+**容量感知（自动购买的核心行为）**：
+
+1. 每次下单前按 `Item.getMaxCount()` 计算背包还能装下多少个该物品（考虑空格子数与已有同类堆的剩余空间）；
+2. **装不下全部**就只买能装下的部分，剩余量自动回插队列——存货完成后会回来补齐，不会死板地一次买空或放弃；
+3. 到达后若**一个都装不下**（背包满且无保留物品），自动触发存货流程：导航到最近的存货点 → 主动开箱 → 逐格搬运（保留列表中的物品不搬）→ 箱子装满则顺延配置里的下一个存货点 → 全部失败则中止购买并提示；
+4. 存货可用 `/qab stash add|list|remove` 管理，或直接编辑 `qab.json` 的 `stashPositions`。
+
+> 计划格式版本 1（旧）缺少 `itemId`，无法做容量预判，`/qab nav apply` 会直接拒绝并提示重新生成。
+
 ## 配置文件
 
 ### `config/qab/qab.json`
@@ -123,8 +132,15 @@ QAB 运行时配置（文件不存在时使用默认值）：
 | 字段 | 说明 | 默认 |
 | --- | --- | --- |
 | `buyDelayMs` | 到达告示牌后、发送购买命令前的等待毫秒数 | 500 |
-| `buyCommand` | 到达后执行的购买命令模板，`{count}` 被替换为计划购买总量 | `/qs amount {count}` |
+| `buyCommand` | 到达后执行的购买命令模板，`{count}` 被替换为<b>本次实际购买量</b>（可能因容量限制少于计划） | `/qs amount {count}` |
 | `clickReachDist` | 判定"准星可点击到告示牌"的最大距离（方块） | 5.0 |
+| `stashEnabled` | 是否启用背包满时自动存货 | true |
+| `stashPositions` | 存货点坐标列表（格式 `维度(x,y,z)`），按顺序使用，箱子装满则顺延下一个 | `[]` |
+| `stashKeepItems` | 存货时<b>不搬运</b>的物品 ID 列表（如工具、货币） | `[]` |
+| `stashTransferDelaySec` | 每搬一格物品的冷却秒数（反刷屏） | 0.15 |
+| `stashReopenDelaySec` | 开箱失败后的重试间隔秒数 | 1.0 |
+| `stashReopenMaxTries` | 开箱最大重试次数 | 10 |
+| `stashCapacityThreshold` | 剩余空格数低于此值触发存货（设为 0 表示满了才去） | 0 |
 
 示例：
 
@@ -132,9 +148,23 @@ QAB 运行时配置（文件不存在时使用默认值）：
 {
   "buyDelayMs": 500,
   "buyCommand": "/qs amount {count}",
-  "clickReachDist": 5.0
+  "clickReachDist": 5.0,
+  "stashEnabled": true,
+  "stashPositions": [
+    "minecraft:overworld(60,71,-120)",
+    "minecraft:overworld(64,71,-118)"
+  ],
+  "stashKeepItems": ["minecraft:diamond_pickaxe", "minecraft:emerald"],
+  "stashTransferDelaySec": 0.15
 }
 ```
+
+> **存货点管理命令**（无需手写 JSON）：
+> - `/qab stash add` — 把准星所指的方块记为存货点（需在 6 格内）；
+> - `/qab stash list` — 列出所有已配置存货点及其序号；
+> - `/qab stash remove <序号>` — 按序号移除存货点。
+>
+> 命令会自动持久化到 `qab.json`。
 
 ### `config/qab/block-mapping.json`
 
@@ -174,25 +204,27 @@ QAB 运行时配置（文件不存在时使用默认值）：
 }
 ```
 
-**购买计划**（`qab/plan/*.json`）：
+**购买计划**（`qab/plan/*.json`，当前格式版本 **2**）：
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "totalCost": 123.0,
   "failed": [ { "item": { "id": "minecraft:diamond", "count": 5 }, "count": 5, "redundancy": 0 } ],
   "warn": [],
   "plan": [
-    { "position": "minecraft:overworld(12,65,-13)", "count": 64, "redundancy": 0 }
+    { "position": "minecraft:overworld(12,65,-13)", "itemId": "minecraft:stone", "count": 64, "redundancy": 0 }
   ]
 }
 ```
+
+> 版本 2 起每条计划新增 `itemId`（商品的物品 ID），供自动购买查询堆叠上限做背包容量预判。旧版本计划无法用于 `/qab nav apply`，需重新生成。
 
 ## 模块结构
 
 - `config`：运行时配置（`QabConfig`）与方块映射配置（`BlockMappingConfig`）。
 - `generator`：原理图解析与清单生成（`SchematicListGenerator` / `BlockItemResolver` / `ListGenConfig`）。
-- `integration`：对接 Chunk Scanner（数据库加载 `CsQShopDbLoader`、导航 `CsNavigationHelper`、购买触发 `QShopBuyCondition`）。
+- `integration`：对接 Chunk Scanner（数据库加载 `CsQShopDbLoader`、导航门面 `CsNavigationHelper`）、购买编排（`ShoppingRunner` 单目标投递 + 容量预判 + 部分购买回插）、存货（`StashRoutine` 状态机 + `InventoryCapacityCalculator` 容量计算 + `BlockAimHelper` 方块对准公共工具）。
 - `planner`：购物规划与领域模型（`ShoppingPlanner` 及 `model` 包）。
 
 ## 许可证
