@@ -181,16 +181,19 @@ public final class ShoppingRunner {
             return;
         }
 
-        // 条件对象报告本目标已处理完（买完 / 部分买 / 放弃）
-        if (currentCondition != null && currentCondition.isResolved()) {
-            // 购买命令是延时发送的，必须等它真的发出去再走，
-            // 否则玩家会在下单前就被 Baritone 带离商店。
-            if (currentCondition.hasPendingCommand()) {
-                currentCondition.tickCommand(client);
+        QShopBuyCondition cond = currentCondition;
+
+        // 已到店：导航已把目标出队并取消 Baritone，
+        // 「对准 → 点击 → 发购买命令」这段时序由本编排器逐 tick 驱动。
+        if (cond != null && cond.isArrived()) {
+            boolean hadPending = cond.hasPendingCommand();
+            cond.tick(client);
+            if (hadPending && !cond.hasPendingCommand()) {
                 // 命令刚发出，等服务器发货后再评估容量
-                if (!currentCondition.hasPendingCommand()) {
-                    settleTicks = currentCondition.getBoughtAmount() > 0 ? SETTLE_TICKS : 0;
-                }
+                settleTicks = cond.getBoughtAmount() > 0 ? SETTLE_TICKS : 0;
+            }
+            // 还在对准，或购买命令尚未发出，都不能推进到下一个目标
+            if (!cond.isResolved() || cond.hasPendingCommand()) {
                 return;
             }
             if (settleTicks > 0) {
@@ -201,7 +204,7 @@ public final class ShoppingRunner {
             return;
         }
 
-        // 导航自行结束但条件未触发：目标不可达，跳过以免卡死
+        // 还没到店导航就结束了：目标不可达，跳过以免卡死
         ChunkScannerNavigation nav = CsNavigationHelper.navigationIfPresent();
         if (nav != null && !nav.isActive()) {
             if (navGrace > 0) {
@@ -258,6 +261,15 @@ public final class ShoppingRunner {
         int bought = cond.getBoughtAmount();
         int remaining = cond.getRemainingAmount();
         boughtItems += bought;
+
+        if (cond.isAimFailed()) {
+            // 到店了却始终点不到牌子（被遮挡 / 牌子已不存在），给玩家一条明确提示
+            notifyPlayer(client, Text.translatable("qab.msg.buy_aim_failed",
+                    formatPos(task.getSignPos())).formatted(Formatting.YELLOW));
+            skippedTasks++;
+            dispatchNext(client);
+            return;
+        }
 
         if (bought > 0) {
             LOGGER.info("Bought {} x{} at {} ({} remaining at this shop).",

@@ -2,44 +2,112 @@ package com.billy65536.qab.automatic;
 
 import com.billy65536.qab.integration.QShopBuyCondition;
 
+import net.minecraft.block.BlockState;
+import net.minecraft.block.ShapeContext;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.shape.VoxelShape;
+import net.minecraft.world.BlockView;
 import net.minecraft.world.RaycastContext;
 
 /**
- * 方块对准工具：把视角转向目标方块并用射线确认视线未被遮挡。
+ * 方块对准工具：把视角转向目标方块、把朝向同步给服务器，并用准星射线确认真的指到了它。
  *
- * <p>购买告示牌（{@link QShopBuyCondition}）与开启存货箱（{@link StashRoutine}）
- * 都需要这套逻辑，抽出来共用。</p>
+ * <p>购买告示牌（{@link QShopBuyCondition}）与开启存货箱（{@link StashRoutine}）共用这套逻辑。</p>
  *
- * <h3>为什么必须自己转视角</h3>
- * <p>Baritone 只负责把身体走过去，<b>不会转头看目标</b>。玩家走到点位后视角朝向是随机的，
- * 直接读 {@code client.crosshairTarget} 判断是否指向目标方块几乎永远不成立 ——
- * 表现为「人到了但点不到」，队列卡死不再推进。必须由调用方接管视角主动 lookAt。</p>
+ * <h3>设计参考</h3>
+ * <p>思路取自 <a href="https://github.com/noname-mods/PlayerAPI">PlayerAPI</a> 的两级动作模型：</p>
+ * <ul>
+ *   <li><b>Forced</b>（{@link #snapLookAt}）—— 一帧到位的精确朝向，用于内部计算；</li>
+ *   <li><b>Human</b>（{@link #stepLookAt}）—— 每 tick 限速转动的类人插值，转头过程可见、
+ *       也不会出现瞬移式甩头；</li>
+ *   <li><b>look-then-do</b> —— 先对准、等朝向稳定并同步到服务端，再执行交互
+ *       （由调用方的状态机实现，见 {@link #syncRotation}）。</li>
+ * </ul>
+ *
+ * <h3>三个必须踩对的点</h3>
+ * <ol>
+ *   <li><b>对准点不能用方块几何中心</b>。墙上告示牌（{@code WallSignBlock}）的实体形状贴在墙面上，
+ *       方块中心 {@code (0.5,0.5,0.5)} 落在形状<b>之外</b>；以中心为终点的射线会在够到牌面前就结束，
+ *       永远判定"看不到"。必须取
+ *       {@linkplain BlockState#getOutlineShape(BlockView, BlockPos, ShapeContext) 轮廓形状}的包围盒中心
+ *       —— 见 {@link #aimPoint}。</li>
+ *   <li><b>朝向要主动发包</b>。客户端的朝向随移动包在<b>玩家 tick</b> 中发出，而模组逻辑跑在
+ *       {@code END_CLIENT_TICK}，晚于发包。若同一 tick 内改完朝向就点击，服务器收到攻击包时
+ *       记录的仍是旧朝向。必须显式补发 {@link #syncRotation}。</li>
+ *   <li><b>转视角前必须先停 Baritone</b>。Baritone 的 LookBehavior 每 tick 会按路径改写朝向，
+ *       并抢在移动包之前生效；寻路未停时无论怎么设 yaw/pitch，服务器看到的都是 Baritone 的朝向。
+ *       调用方须先让导航出队（Baritone 随之取消）再进入对准流程。</li>
+ * </ol>
  */
 public final class BlockAimHelper {
+
+    /** 单 tick 允许的最小转动角度，防止配置写 0 导致永远转不到位。 */
+    private static final float MIN_STEP_DEG = 1.0F;
+
+    /** 单 tick 允许的最大转动角度（等价于瞬间对准）。 */
+    private static final float MAX_STEP_DEG = 180.0F;
 
     private BlockAimHelper() {
     }
 
-    /**
-     * 把玩家视角对准目标点（单帧直接设置）。
-     *
-     * <p>直接改 yaw/pitch 即可，客户端会在下一个 tick 通过移动包同步给服务器。
-     * 同时同步 headYaw/bodyYaw，避免服务器侧朝向判定与客户端不一致。</p>
-     *
-     * @param player 玩家
-     * @param target 目标点（世界坐标）
-     */
-    public static void lookAt(ClientPlayerEntity player, Vec3d target) {
-        if (player == null || target == null) return;
+    /** 一组视角朝向。 */
+    public record Rotation(float yaw, float pitch) {
+    }
 
-        Vec3d eye = player.getEyePos();
+    // ==================== 目标点 ====================
+
+    /**
+     * 计算目标方块的对准点。
+     *
+     * <p>取轮廓形状包围盒的中心而非方块几何中心：墙上告示牌、梯子、按钮这类"贴面薄片"方块，
+     * 几何中心并不在实体形状内，朝它发射线会打空。形状为空（如空气/纯装饰）时回退到几何中心。</p>
+     *
+     * @param world 世界（可为 null，此时回退几何中心）
+     * @param pos   目标方块
+     * @return 世界坐标下的对准点；{@code pos} 为 null 时返回 null
+     */
+    public static Vec3d aimPoint(BlockView world, BlockPos pos) {
+        if (pos == null) return null;
+        if (world == null) return Vec3d.ofCenter(pos);
+
+        try {
+            BlockState state = world.getBlockState(pos);
+            VoxelShape shape = state.getOutlineShape(world, pos, ShapeContext.absent());
+            if (shape.isEmpty()) {
+                shape = state.getCollisionShape(world, pos);
+            }
+            if (!shape.isEmpty()) {
+                Box box = shape.getBoundingBox();
+                return new Vec3d(
+                        pos.getX() + (box.minX + box.maxX) * 0.5,
+                        pos.getY() + (box.minY + box.maxY) * 0.5,
+                        pos.getZ() + (box.minZ + box.maxZ) * 0.5);
+            }
+        } catch (Exception e) {
+            // 形状计算依赖方块状态，异常时不应中断购买流程
+        }
+        return Vec3d.ofCenter(pos);
+    }
+
+    // ==================== 朝向计算 ====================
+
+    /**
+     * 计算从 {@code eye} 看向 {@code target} 所需的朝向。
+     *
+     * @param eye    视点（通常是 {@code player.getEyePos()}）
+     * @param target 目标点
+     * @return 朝向；任一参数为 null 时返回 null
+     */
+    public static Rotation rotationTo(Vec3d eye, Vec3d target) {
+        if (eye == null || target == null) return null;
         double dx = target.x - eye.x;
         double dy = target.y - eye.y;
         double dz = target.z - eye.z;
@@ -47,38 +115,103 @@ public final class BlockAimHelper {
 
         float yaw = (float) (MathHelper.atan2(-dx, dz) * (180.0 / Math.PI));
         float pitch = (float) (-(MathHelper.atan2(dy, horizontal) * (180.0 / Math.PI)));
+        return new Rotation(MathHelper.wrapDegrees(yaw), MathHelper.clamp(pitch, -90.0F, 90.0F));
+    }
 
+    // ==================== 施加朝向 ====================
+
+    /**
+     * 直接写入玩家朝向（含头部/身体朝向），不做插值。
+     *
+     * <p>不动 {@code prevYaw/prevPitch}：渲染层按 {@code lerp(prev, now, tickDelta)} 插值，
+     * 保留上一 tick 的值才能让转头过程平滑可见。</p>
+     */
+    public static void applyRotation(ClientPlayerEntity player, float yaw, float pitch) {
+        if (player == null) return;
+        float clamped = MathHelper.clamp(pitch, -90.0F, 90.0F);
         player.setYaw(yaw);
-        player.setPitch(MathHelper.clamp(pitch, -90.0F, 90.0F));
+        player.setPitch(clamped);
         player.headYaw = yaw;
         player.bodyYaw = yaw;
     }
 
     /**
-     * 从玩家眼睛向目标方块中心做射线检测，确认视线能命中该方块（任意面均可）。
+     * 一帧内精确看向目标点（Forced 模式）。
      *
-     * @param client 客户端
-     * @param player 玩家
-     * @param pos    目标方块坐标
-     * @param reach  最大可交互距离
-     * @return 命中目标方块时返回命中结果（含命中的那一面）；超距、被遮挡或未命中返回 null
+     * @return 施加的朝向；参数非法时返回 null
      */
-    public static BlockHitResult raycastTo(MinecraftClient client,
-                                           ClientPlayerEntity player,
-                                           BlockPos pos,
-                                           double reach) {
+    public static Rotation snapLookAt(ClientPlayerEntity player, Vec3d target) {
+        if (player == null || target == null) return null;
+        Rotation want = rotationTo(player.getEyePos(), target);
+        if (want == null) return null;
+        applyRotation(player, want.yaw(), want.pitch());
+        return want;
+    }
+
+    /**
+     * 朝目标点转动一步（Human 模式，每 tick 调用一次）。
+     *
+     * <p>每 tick 最多转 {@code maxDegPerTick} 度；剩余偏差小于一步时<b>精确对齐</b>到目标朝向
+     * —— 精确对齐是必要的，告示牌很薄，差半度准星就滑出牌面。</p>
+     *
+     * @param player        玩家
+     * @param target        对准点（建议用 {@link #aimPoint} 计算）
+     * @param maxDegPerTick 单 tick 最大转动角度
+     * @return true 表示本次调用后已<b>精确</b>对准目标
+     */
+    public static boolean stepLookAt(ClientPlayerEntity player, Vec3d target, float maxDegPerTick) {
+        if (player == null || target == null) return false;
+        Rotation want = rotationTo(player.getEyePos(), target);
+        if (want == null) return false;
+
+        float step = MathHelper.clamp(maxDegPerTick, MIN_STEP_DEG, MAX_STEP_DEG);
+        float dYaw = MathHelper.wrapDegrees(want.yaw() - player.getYaw());
+        float dPitch = want.pitch() - player.getPitch();
+
+        if (Math.abs(dYaw) <= step && Math.abs(dPitch) <= step) {
+            applyRotation(player, want.yaw(), want.pitch());
+            return true;
+        }
+        applyRotation(player,
+                player.getYaw() + MathHelper.clamp(dYaw, -step, step),
+                player.getPitch() + MathHelper.clamp(dPitch, -step, step));
+        return false;
+    }
+
+    /**
+     * 立即把当前朝向发给服务器。
+     *
+     * <p>客户端本来只在玩家 tick 里随移动包发朝向，而模组逻辑在 {@code END_CLIENT_TICK} 才改朝向，
+     * 不补发就会出现"客户端已经看着牌子、服务器以为你还看着别处"的错位，
+     * 交互会被服务端或反作弊判为无效。</p>
+     */
+    public static void syncRotation(ClientPlayerEntity player) {
+        if (player == null || player.networkHandler == null) return;
+        player.networkHandler.sendPacket(new PlayerMoveC2SPacket.LookAndOnGround(
+                player.getYaw(), player.getPitch(), player.isOnGround()));
+    }
+
+    // ==================== 命中校验 ====================
+
+    /**
+     * 沿玩家<b>真实视线方向</b>做射线检测，确认准星确实落在目标方块上。
+     *
+     * <p>这与服务器复算交互时用的射线一致，比"眼睛→方块中心"更能反映实际可点击性。</p>
+     *
+     * @param reach 最大交互距离
+     * @return 准星命中目标方块时返回命中结果（含命中面与命中点）；否则 null
+     */
+    public static BlockHitResult crosshairHit(MinecraftClient client,
+                                              ClientPlayerEntity player,
+                                              BlockPos pos,
+                                              double reach) {
         if (client == null || client.world == null || player == null || pos == null) {
             return null;
         }
-
         Vec3d eye = player.getEyePos();
-        Vec3d center = Vec3d.ofCenter(pos);
-        if (eye.distanceTo(center) > reach) {
-            return null;
-        }
-
+        Vec3d end = eye.add(player.getRotationVec(1.0F).multiply(reach));
         HitResult result = client.world.raycast(new RaycastContext(
-                eye, center,
+                eye, end,
                 RaycastContext.ShapeType.OUTLINE,
                 RaycastContext.FluidHandling.NONE,
                 player));
@@ -92,11 +225,45 @@ public final class BlockAimHelper {
     }
 
     /**
-     * 玩家眼睛到方块中心的距离。
+     * 从玩家眼睛向目标方块的{@linkplain #aimPoint 对准点}做射线检测，判断视线是否被遮挡。
      *
-     * @param player 玩家
-     * @param pos    方块坐标
-     * @return 距离；玩家为 null 时返回 {@link Double#MAX_VALUE}
+     * <p>与 {@link #crosshairHit} 的区别：本方法<b>不依赖</b>当前朝向，用于"转过去之前先看看能不能看到"。</p>
+     *
+     * @return 命中目标方块时返回命中结果；超距、被遮挡或未命中返回 null
+     */
+    public static BlockHitResult lineOfSight(MinecraftClient client,
+                                             ClientPlayerEntity player,
+                                             BlockPos pos,
+                                             double reach) {
+        if (client == null || client.world == null || player == null || pos == null) {
+            return null;
+        }
+        Vec3d eye = player.getEyePos();
+        Vec3d target = aimPoint(client.world, pos);
+        if (eye.distanceTo(target) > reach) {
+            return null;
+        }
+
+        HitResult result = client.world.raycast(new RaycastContext(
+                eye, target,
+                RaycastContext.ShapeType.OUTLINE,
+                RaycastContext.FluidHandling.NONE,
+                player));
+
+        if (result instanceof BlockHitResult blockHit
+                && blockHit.getType() == HitResult.Type.BLOCK
+                && blockHit.getBlockPos().equals(pos)) {
+            return blockHit;
+        }
+        return null;
+    }
+
+    // ==================== 杂项 ====================
+
+    /**
+     * 玩家眼睛到方块几何中心的距离，用于"是否走到店门口"的粗判。
+     *
+     * @return 距离；参数为 null 时返回 {@link Double#MAX_VALUE}
      */
     public static double distanceTo(ClientPlayerEntity player, BlockPos pos) {
         if (player == null || pos == null) return Double.MAX_VALUE;
@@ -104,15 +271,12 @@ public final class BlockAimHelper {
     }
 
     /**
-     * 描述一次射线检测的结果，用于诊断日志。
+     * 描述一次对准的实际状况，用于诊断日志。
      *
-     * @param client 客户端
-     * @param player 玩家
-     * @param pos    期望命中的方块
-     * @param hit    {@link #raycastTo} 的返回值
+     * @param hit {@link #crosshairHit} 的返回值
      * @return 人类可读的诊断串
      */
-    public static String describeHit(MinecraftClient client,
+    public static String describeAim(MinecraftClient client,
                                      ClientPlayerEntity player,
                                      BlockPos pos,
                                      BlockHitResult hit) {
@@ -122,13 +286,21 @@ public final class BlockAimHelper {
         if (client == null || client.world == null || player == null) {
             return "no-context";
         }
+        Vec3d eye = player.getEyePos();
+        Vec3d end = eye.add(player.getRotationVec(1.0F).multiply(64.0));
         HitResult raw = client.world.raycast(new RaycastContext(
-                player.getEyePos(), Vec3d.ofCenter(pos),
+                eye, end,
                 RaycastContext.ShapeType.OUTLINE,
                 RaycastContext.FluidHandling.NONE, player));
-        if (raw instanceof BlockHitResult bh) {
-            return "miss hit=" + bh.getBlockPos() + " side=" + bh.getSide();
-        }
-        return "no-block(" + raw.getType() + ")";
+
+        String crosshair = raw instanceof BlockHitResult bh && bh.getType() == HitResult.Type.BLOCK
+                ? bh.getBlockPos().toShortString()
+                : "none(" + raw.getType() + ")";
+        boolean los = lineOfSight(client, player, pos, 64.0) != null;
+        Rotation want = rotationTo(eye, aimPoint(client.world, pos));
+        return String.format("miss crosshair=%s los=%s yaw=%.1f/%.1f pitch=%.1f/%.1f",
+                crosshair, los,
+                player.getYaw(), want == null ? Float.NaN : want.yaw(),
+                player.getPitch(), want == null ? Float.NaN : want.pitch());
     }
 }

@@ -103,6 +103,10 @@ public final class StashRoutine {
 
     private int navTicks;
     private int aimTicks;
+    /** 已精确对齐并保持的 tick 数，达到 settle 阈值才允许开箱。 */
+    private int alignedTicks;
+    /** 当前箱子的对准点（形状中心），换点位时重算。 */
+    private Vec3d aimTarget;
     private int openWaitTicks;
     private int transferCooldown;
 
@@ -231,17 +235,32 @@ public final class StashRoutine {
             return;
         }
 
+        // 与购买告示牌同一套对准逻辑：形状中心 + 限速转头 + 主动发朝向包 + 准星射线校验。
+        // 此时导航已停（见 tickNavigating），Baritone 不会再抢改朝向。
         double reach = config.getClickReachDist();
-        BlockAimHelper.lookAt(player, Vec3d.ofCenter(currentChest));
-        BlockHitResult hit = BlockAimHelper.raycastTo(client, player, currentChest, reach);
+        if (aimTarget == null) {
+            aimTarget = BlockAimHelper.aimPoint(client.world, currentChest);
+        }
+        boolean aligned = BlockAimHelper.stepLookAt(player, aimTarget, config.getAimDegPerTick());
+
+        BlockHitResult hit = null;
+        if (aligned) {
+            BlockAimHelper.syncRotation(player);
+            alignedTicks++;
+            if (alignedTicks > config.getAimSettleTicks()) {
+                hit = BlockAimHelper.crosshairHit(client, player, currentChest, reach);
+            }
+        } else {
+            alignedTicks = 0;
+        }
 
         if (hit == null) {
             if (aimTicks % 20 == 0) {
                 LOGGER.debug("Aiming at stash chest {}: {}", currentChest,
-                        BlockAimHelper.describeHit(client, player, currentChest, null));
+                        BlockAimHelper.describeAim(client, player, currentChest, null));
             }
             if (++aimTicks >= MAX_AIM_TICKS) {
-                LOGGER.warn("No line of sight to stash chest at {} after {} ticks.",
+                LOGGER.warn("Cannot aim at stash chest at {} after {} ticks.",
                         currentChest, MAX_AIM_TICKS);
                 tryNextOrFail(client, Result.UNREACHABLE);
             }
@@ -358,6 +377,8 @@ public final class StashRoutine {
             currentDimension = pp.dimensionId;
             navTicks = 0;
             aimTicks = 0;
+            alignedTicks = 0;
+            aimTarget = null;
             openWaitTicks = 0;
 
             // 已经在旁边就直接开箱，省一次导航
@@ -384,6 +405,7 @@ public final class StashRoutine {
     private void enterOpening() {
         phase = Phase.OPENING;
         aimTicks = 0;
+        alignedTicks = 0;
         openWaitTicks = 0;
     }
 

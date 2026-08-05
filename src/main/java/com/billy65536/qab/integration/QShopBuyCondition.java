@@ -11,6 +11,7 @@ import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.entity.SignBlockEntity;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
@@ -20,48 +21,51 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * 导航到达条件 + 自动购买副作用（带背包容量预判与部分购买）。
+ * 到店判定（{@link NavigationCondition}）+ 到店后的购买时序状态机。
  *
- * <p>作为 {@link NavigationCondition} 注入 {@code ChunkScannerNavigation}：</p>
+ * <h3>职责切分（重要）</h3>
  * <ul>
- *   <li>{@link #isSatisfied(MinecraftClient)} 先判断玩家是否走到了告示牌附近；</li>
- *   <li>到位后<b>主动把视角转向告示牌</b>（Baritone 只负责移动身体，不会转头看目标），
- *       再用射线检测确认视线未被遮挡；</li>
- *   <li>下单前<b>计算背包还能装多少</b>，装不下就少买或不买；</li>
- *   <li>处理完毕后 {@link #isResolved()} 转 true，由 {@link ShoppingRunner} 决定后续。</li>
+ *   <li>{@link #isSatisfied(MinecraftClient)} <b>只判断"走到了没有"</b>。一旦判定到达，
+ *       chunkscanner 会把目标出队、队列清空后<b>取消 Baritone</b>；</li>
+ *   <li>之后的「对准 → 同步朝向 → 点击 → 发购买命令」由 {@link ShoppingRunner}
+ *       每 tick 调用 {@link #tick(MinecraftClient)} 驱动。</li>
  * </ul>
  *
- * <h3>为什么要容量预判</h3>
- * <p>QShop 在玩家背包空间不足时会<b>拒绝发货</b>，且这是纯服务端行为，
- * 客户端无法从响应可靠检测失败。若不预判，表现为「计划显示成功、东西没到手」。
- * 因此必须在下单前按 {@code Item.getMaxCount()} 算准能装几个，
- * 装不下的部分交给 {@link ShoppingRunner} 存货后再回来买。</p>
+ * <p><b>为什么必须这样切</b>：Baritone 的 LookBehavior 每 tick 都会按路径改写玩家朝向，
+ * 且抢在移动包之前生效。寻路没停就转视角，客户端看着像在抽搐、服务器收到的始终是 Baritone 的朝向，
+ * 表现为"人到了、头没转向牌子、点不出商店"。所以要先让导航出队把 Baritone 停掉，再从容对准。</p>
  *
- * <h3>购买流程</h3>
+ * <h3>购买时序（look-then-do）</h3>
  * <ol>
- *   <li>转动视角对准告示牌，射线确认命中；</li>
- *   <li>计算可购买量：装不下一个就直接标记容量受阻，不做无效点击；</li>
- *   <li>左键点击告示牌<b>命中面</b>（等价于玩家手动左键，服务器识别为商店交互）；</li>
- *   <li>等待 {@code config.buyDelayMs} 毫秒后发送 {@code config.buyCommand}
- *       （{@code {count}} 替换为<b>本次实际购买量</b>）。</li>
+ *   <li>按 {@link QabConfig#getAimDegPerTick()} 限速转向告示牌
+ *       {@linkplain BlockAimHelper#aimPoint 形状中心}（不是方块几何中心，
+ *       墙上告示牌的几何中心不在牌面内，朝它发射线必定打空）；</li>
+ *   <li>精确对齐后主动补发朝向包，并静置 {@link QabConfig#getAimSettleTicks()} tick
+ *       让服务端先记住新朝向；</li>
+ *   <li>用<b>准星射线</b>（与服务器复算一致）确认真的指着牌子；</li>
+ *   <li>算背包还能装多少 —— QShop 装不下会拒绝发货且客户端无法察觉，必须预判；</li>
+ *   <li>左键点击命中面并在下一 tick 松开，随后延时发送购买命令，
+ *       全程保持视角锁定在牌子上。</li>
  * </ol>
  */
 public final class QShopBuyCondition implements NavigationCondition {
     private static final Logger LOGGER = LoggerFactory.getLogger("qab.buy");
 
     /**
-     * 到位判定的额外宽限距离（方块）。
+     * 到店判定的额外宽限距离（方块）。
      * Baritone 停下的位置未必精确等于目标点，留出余量避免刚好差一点点就不判定到达。
      */
     private static final double ARRIVE_SLACK = 1.5;
 
-    /** 视线被遮挡时的最大重试 tick 数，超时后放弃该目标以免队列永久卡死。 */
-    private static final int MAX_AIM_TICKS = 60;
+    /** 到店后对准告示牌的最大 tick 数，超时放弃该目标以免队列永久卡死。 */
+    private static final int MAX_AIM_TICKS = 100;
 
     private final BuyTask task;
     private final BlockPos signPos;
     private final QabConfig config;
 
+    /** 是否已走到店门口（导航据此出队并停掉 Baritone）。 */
+    private volatile boolean arrived;
     /** 本目标是否已处理完毕（无论买没买成），供 {@link ShoppingRunner} 轮询。 */
     private volatile boolean resolved;
     /** 本次实际购买的数量。 */
@@ -70,9 +74,19 @@ public final class QShopBuyCondition implements NavigationCondition {
     private volatile int remainingAmount;
     /** 未买完是否因为背包装不下（决定要不要触发存货）。 */
     private volatile boolean blockedByCapacity;
+    /** 是否因为始终对不准/点不到而放弃（用于给玩家一条明确提示）。 */
+    private volatile boolean aimFailed;
 
-    /** 已进入「到位并尝试对准」阶段的累计 tick 数，用于超时放弃。 */
+    /** 缓存的对准点，避免每 tick 重算形状。 */
+    private Vec3d aimPoint;
+
+    /** 到店后的累计对准 tick 数，用于超时放弃。 */
     private int aimTicks;
+    /** 已精确对齐并保持的 tick 数，达到 settle 阈值才允许点击。 */
+    private int alignedTicks;
+
+    /** 已发出左键、待下一 tick 松开（模拟真人短按，避免持续破坏方块）。 */
+    private boolean releaseAttackPending;
 
     /** 发送购买命令的倒计时 tick，-1 表示未安排。 */
     private int commandDelayTicks = -1;
@@ -85,9 +99,21 @@ public final class QShopBuyCondition implements NavigationCondition {
         this.remainingAmount = task.getAmount();
     }
 
+    // ==================== 状态查询 ====================
+
+    /** 是否已走到店门口（导航已出队、Baritone 已停）。 */
+    public boolean isArrived() {
+        return arrived;
+    }
+
     /** 本目标是否已处理完毕。 */
     public boolean isResolved() {
         return resolved;
+    }
+
+    /** 是否因始终无法对准/点到告示牌而放弃。 */
+    public boolean isAimFailed() {
+        return aimFailed;
     }
 
     /**
@@ -98,16 +124,6 @@ public final class QShopBuyCondition implements NavigationCondition {
      */
     public boolean hasPendingCommand() {
         return commandDelayTicks >= 0 && pendingCommand != null;
-    }
-
-    /**
-     * 由 {@link ShoppingRunner} 每 tick 调用，推进延时购买命令。
-     *
-     * <p>目标被判定到达后导航队列即弹出该目标，{@link #isSatisfied} 不再被调用，
-     * 因此延时命令必须由外部继续驱动。</p>
-     */
-    public void tickCommand(MinecraftClient client) {
-        tickPendingCommand(client);
     }
 
     /** 本次实际购买的数量。 */
@@ -125,58 +141,99 @@ public final class QShopBuyCondition implements NavigationCondition {
         return blockedByCapacity;
     }
 
+    // ==================== 到店判定 ====================
+
+    /**
+     * 只判断玩家是否已走到可交互距离内。
+     *
+     * <p>返回 true 后 chunkscanner 会出队并取消 Baritone，购买动作交由
+     * {@link #tick(MinecraftClient)} 完成。这里<b>不</b>做视线检查：
+     * 视线被挡是"到店后调整"的问题，若在此处返回 false，Baritone 会一直
+     * 试图站到告示牌所在方块上，反而把玩家挤来挤去、永远对不准。</p>
+     */
     @Override
     public boolean isSatisfied(MinecraftClient client) {
+        if (arrived) return true;
         if (client.player == null || client.world == null) return false;
 
-        // 已处理过则视为到达（让队列继续推进，不再重复购买）
-        if (resolved) {
-            tickPendingCommand(client);
-            return true;
+        double reach = config.getClickReachDist();
+        if (BlockAimHelper.distanceTo(client.player, signPos) > reach + ARRIVE_SLACK) {
+            return false;
         }
 
+        arrived = true;
+        LOGGER.info("Arrived at QShop sign {}, taking over aiming (Baritone released).", signPos);
+        return true;
+    }
+
+    // ==================== 到店后的购买时序 ====================
+
+    /**
+     * 由 {@link ShoppingRunner} 每 tick 调用，推进「对准 → 点击 → 发命令」。
+     *
+     * <p>只在 {@link #isArrived()} 为 true 后才有效果。</p>
+     */
+    public void tick(MinecraftClient client) {
+        if (client.player == null || client.world == null) return;
         ClientPlayerEntity player = client.player;
 
-        // 1) 必须是告示牌（QShop 商店）。方块未加载时 be 为 null，继续等待区块加载。
-        BlockEntity be = client.world.getBlockEntity(signPos);
-        if (!(be instanceof SignBlockEntity)) {
-            return false;
+        // 模拟真人短按：点击的下一 tick 松开左键，避免持续破坏方块
+        if (releaseAttackPending) {
+            releaseAttackPending = false;
+            if (client.interactionManager != null) {
+                client.interactionManager.cancelBlockBreaking();
+            }
         }
 
-        // 2) 先判断是否走到「可交互距离」内：只有离牌子够近才接管视角，
-        //    否则会在赶路途中不断把玩家的头拧向目标，干扰 Baritone 寻路。
-        //    不假设玩家的站位（牌子可能在墙上/柱上/半空），只看距离是否够近能点到。
-        double reach = config.getClickReachDist();
-        if (BlockAimHelper.distanceTo(player, signPos) > reach + ARRIVE_SLACK) {
-            aimTicks = 0;
-            return false;
+        if (resolved) {
+            // 购买命令还没发出去时保持视角锁定，别让玩家把头扭走导致服务端判定异常
+            if (hasPendingCommand()) {
+                holdAim(client, player);
+            }
+            tickPendingCommand(client);
+            return;
+        }
+        if (!arrived) return;
+
+        // 1) 转向告示牌形状中心（限速、可见的类人转头）
+        Vec3d target = aimTarget(client);
+        boolean aligned = BlockAimHelper.stepLookAt(player, target, config.getAimDegPerTick());
+
+        if (aligned) {
+            // 2) 主动把朝向发给服务器，并静置若干 tick 让服务端先记住
+            BlockAimHelper.syncRotation(player);
+            alignedTicks++;
+        } else {
+            alignedTicks = 0;
         }
 
-        // 3) 到位了：主动把视角转向牌子中心。
-        //    Baritone 只负责把身体走过去，不会转头看目标，必须由我们自己对准。
-        BlockAimHelper.lookAt(player, Vec3d.ofCenter(signPos));
+        // 3) 准星射线确认真的指着牌子（与服务器复算一致）
+        BlockHitResult hit = null;
+        if (aligned && alignedTicks > config.getAimSettleTicks()) {
+            hit = BlockAimHelper.crosshairHit(client, player, signPos, config.getClickReachDist());
+        }
 
-        // 4) 射线检测确认视线能命中牌子本身（任意面均可：侧/上/下，不挑剔）。
-        BlockHitResult hit = BlockAimHelper.raycastTo(client, player, signPos, reach);
-
-        if (aimTicks % 10 == 0) {
-            LOGGER.debug("QAB aim sign={} dist={} {}", signPos,
+        if (aimTicks % 20 == 0) {
+            LOGGER.debug("QAB aim sign={} dist={} aligned={} {}", signPos,
                     String.format("%.2f", BlockAimHelper.distanceTo(player, signPos)),
-                    BlockAimHelper.describeHit(client, player, signPos, hit));
+                    aligned, BlockAimHelper.describeAim(client, player, signPos, hit));
         }
 
         if (hit == null) {
-            // 视线被挡或超距：给若干 tick 重试机会，超时则放弃该目标避免队列卡死
             if (++aimTicks >= MAX_AIM_TICKS) {
-                LOGGER.warn("Giving up QShop sign at {}: no line of sight after {} ticks.",
-                        signPos, MAX_AIM_TICKS);
-                // 非容量原因放弃：不触发存货，剩余量记为 0 让 runner 跳过
-                remainingAmount = 0;
-                blockedByCapacity = false;
-                resolved = true;
-                return true;
+                giveUpAiming(client, player);
             }
-            return false;
+            return;
+        }
+
+        // 4) 必须真的是告示牌（QShop 商店），否则说明坐标已失效
+        BlockEntity be = client.world.getBlockEntity(signPos);
+        if (!(be instanceof SignBlockEntity)) {
+            if (++aimTicks >= MAX_AIM_TICKS) {
+                LOGGER.warn("Block at {} is not a sign anymore, skipping.", signPos);
+                giveUpAiming(client, player);
+            }
+            return;
         }
 
         // 5) 下单前算容量：QShop 背包不足会拒绝发货，必须先判断能装多少
@@ -195,7 +252,7 @@ public final class QShopBuyCondition implements NavigationCondition {
                 blockedByCapacity = true;
                 remainingAmount = wanted;
                 resolved = true;
-                return true;
+                return;
             }
         }
 
@@ -206,7 +263,7 @@ public final class QShopBuyCondition implements NavigationCondition {
             blockedByCapacity = true;
             remainingAmount = wanted;
             resolved = true;
-            return true;
+            return;
         }
 
         // 6) 执行购买（可能是部分购买）
@@ -220,13 +277,44 @@ public final class QShopBuyCondition implements NavigationCondition {
                     signPos, affordable, task.getItemId(), wanted);
         }
         performPurchase(client, hit.getSide(), affordable);
-        return true;
+    }
+
+    // ==================== 内部 ====================
+
+    /** 取（必要时计算并缓存）告示牌的对准点。 */
+    private Vec3d aimTarget(MinecraftClient client) {
+        Vec3d point = aimPoint;
+        if (point == null) {
+            point = BlockAimHelper.aimPoint(client.world, signPos);
+            aimPoint = point;
+        }
+        return point;
+    }
+
+    /** 保持视角锁定在告示牌上（购买命令发出前调用）。 */
+    private void holdAim(MinecraftClient client, ClientPlayerEntity player) {
+        Vec3d target = aimTarget(client);
+        if (BlockAimHelper.stepLookAt(player, target, config.getAimDegPerTick())) {
+            BlockAimHelper.syncRotation(player);
+        }
+    }
+
+    /** 对准超时：放弃该目标，避免整个购买流程卡死。 */
+    private void giveUpAiming(MinecraftClient client, ClientPlayerEntity player) {
+        LOGGER.warn("Giving up QShop sign at {}: cannot aim at it after {} ticks. {}",
+                signPos, MAX_AIM_TICKS,
+                BlockAimHelper.describeAim(client, player, signPos, null));
+        // 非容量原因放弃：不触发存货，剩余量记为 0 让 runner 跳过
+        remainingAmount = 0;
+        blockedByCapacity = false;
+        aimFailed = true;
+        resolved = true;
     }
 
     /**
      * 执行自动购买：左键点击告示牌，随后延时发送购买命令。
      *
-     * @param side   射线命中的方块面。必须用真实命中面，
+     * @param side   准星命中的方块面。必须用真实命中面，
      *               硬编码 {@link Direction#UP} 对墙上告示牌是错误的面，服务器可能拒绝该交互。
      * @param amount 本次实际购买数量
      */
@@ -236,9 +324,11 @@ public final class QShopBuyCondition implements NavigationCondition {
 
         try {
             if (client.interactionManager != null) {
+                // 再补一次朝向包：确保服务器处理攻击包时用的就是"看着牌子"的朝向
+                BlockAimHelper.syncRotation(player);
                 client.interactionManager.attackBlock(signPos, side);
-                // 同步挥手动作，部分服务端依赖挥手包判定交互有效
-                player.swingHand(player.getActiveHand());
+                player.swingHand(Hand.MAIN_HAND);
+                releaseAttackPending = true;
             }
             LOGGER.info("QAB auto-clicked QShop sign at {} (side={}) for {} item(s)",
                     signPos, side, amount);

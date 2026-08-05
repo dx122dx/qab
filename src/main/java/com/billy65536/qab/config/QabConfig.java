@@ -23,7 +23,10 @@ import java.util.List;
  *   <li>{@code buyDelayMs}：到达告示牌后、发送购买命令前的等待毫秒数（默认 500）；</li>
  *   <li>{@code buyCommand}：到达后执行的购买命令模板，
  *       形如 {@code /qs amount {count}}，{@code {count}} 被替换为本次购买数量；</li>
- *   <li>{@code clickReachDist}：判定"准星可点击到告示牌"的最大距离（默认 5.0 方块）。</li>
+ *   <li>{@code clickReachDist}：判定"准星可点击到告示牌"的最大距离（默认 5.0 方块）；</li>
+ *   <li>{@code aimDegPerTick}：到店后转视角的每 tick 最大角度（默认 30°，值越小转头越"像人"）；</li>
+ *   <li>{@code aimSettleTicks}：精确对准后、点击前的静置 tick 数（默认 2），
+ *       给服务端留出接收新朝向的时间。</li>
  * </ul>
  *
  * <h3>存货（stash）相关</h3>
@@ -52,6 +55,15 @@ public final class QabConfig {
     private static final int DEFAULT_BUY_DELAY_MS = 500;
     private static final String DEFAULT_BUY_COMMAND = "/qs amount {count}";
     private static final double DEFAULT_CLICK_REACH_DIST = 5.0;
+    private static final float DEFAULT_AIM_DEG_PER_TICK = 30.0F;
+    private static final int DEFAULT_AIM_SETTLE_TICKS = 2;
+
+    /** 转头速度下限：太小会让对准迟迟完不成，触发超时放弃。 */
+    private static final float MIN_AIM_DEG_PER_TICK = 5.0F;
+    /** 转头速度上限：180°/tick 等价于瞬间对准。 */
+    private static final float MAX_AIM_DEG_PER_TICK = 180.0F;
+    /** 静置 tick 上限：再久也没有意义，只会拖慢购买。 */
+    private static final int MAX_AIM_SETTLE_TICKS = 40;
 
     private static final boolean DEFAULT_STASH_ENABLED = true;
     private static final int DEFAULT_STASH_TRANSFER_DELAY_TICKS = 2;
@@ -68,6 +80,10 @@ public final class QabConfig {
     private String buyCommand = DEFAULT_BUY_COMMAND;
     /** 准星可点击告示牌的最大距离（方块）。 */
     private double clickReachDist = DEFAULT_CLICK_REACH_DIST;
+    /** 到店后转视角的每 tick 最大角度（度）。 */
+    private float aimDegPerTick = DEFAULT_AIM_DEG_PER_TICK;
+    /** 精确对准后、发起点击前的静置 tick 数。 */
+    private int aimSettleTicks = DEFAULT_AIM_SETTLE_TICKS;
 
     /** 是否启用自动存货。 */
     private boolean stashEnabled = DEFAULT_STASH_ENABLED;
@@ -117,6 +133,19 @@ public final class QabConfig {
         if (buyDelayMs < 0) buyDelayMs = DEFAULT_BUY_DELAY_MS;
         if (buyCommand == null || buyCommand.isBlank()) buyCommand = DEFAULT_BUY_COMMAND;
         if (clickReachDist <= 0) clickReachDist = DEFAULT_CLICK_REACH_DIST;
+
+        if (aimDegPerTick < MIN_AIM_DEG_PER_TICK) {
+            aimDegPerTick = aimDegPerTick <= 0 ? DEFAULT_AIM_DEG_PER_TICK : MIN_AIM_DEG_PER_TICK;
+        } else if (aimDegPerTick > MAX_AIM_DEG_PER_TICK) {
+            aimDegPerTick = MAX_AIM_DEG_PER_TICK;
+        }
+        if (aimSettleTicks < 0) {
+            aimSettleTicks = DEFAULT_AIM_SETTLE_TICKS;
+        } else if (aimSettleTicks > MAX_AIM_SETTLE_TICKS) {
+            LOGGER.warn("aimSettleTicks={} too large, clamped to {}.",
+                    aimSettleTicks, MAX_AIM_SETTLE_TICKS);
+            aimSettleTicks = MAX_AIM_SETTLE_TICKS;
+        }
 
         if (stashPositions == null) {
             stashPositions = new ArrayList<>();
@@ -174,6 +203,16 @@ public final class QabConfig {
 
     public double getClickReachDist() {
         return clickReachDist;
+    }
+
+    /** 到店后转视角的每 tick 最大角度（度）。 */
+    public float getAimDegPerTick() {
+        return aimDegPerTick;
+    }
+
+    /** 精确对准后、发起点击前的静置 tick 数。 */
+    public int getAimSettleTicks() {
+        return aimSettleTicks;
     }
 
     public boolean isStashEnabled() {
