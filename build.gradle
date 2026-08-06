@@ -50,7 +50,7 @@ dependencies {
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
     // Fabric API
-    modImplementation "net.fabricmc:fabric-api:fabric-api:${project.fabric_api_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
     // Chunk Scanner — 读取 QShop 扫描数据（client 端），从 Maven Central SNAPSHOT 拉取
     // 通过 IChunkDb.FactoryRegistry 工厂模式加载，不硬编码 BinaryChunkDb
