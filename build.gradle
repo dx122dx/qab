@@ -6,20 +6,6 @@ plugins {
 version = project.mod_version
 group = project.maven_group
 
-// 自动复用 Chunk Scanner 工程的版本号，避免手动同步导致 build 失败。
-// 依赖 ../chunkscanner/gradle.properties 中的 mod_version；若路径失效则回退到兜底值。
-def csProps = new Properties()
-def csPropsFile = file("${rootDir}/../chunkscanner/gradle.properties")
-if (csPropsFile.exists()) {
-    csProps.load(new FileInputStream(csPropsFile))
-    project.ext.chunkscanner_version = csProps['mod_version']
-} else {
-    project.ext.chunkscanner_version = project.chunkscanner_default_version
-}
-
-// Chunk Scanner 本地依赖目录：默认 ../chunkscanner，CI 用 CHUNKSCANNER_DIR 指向 checkout 目录
-def chunkscannerDir = System.getenv("CHUNKSCANNER_DIR") ?: "${rootDir}/../chunkscanner"
-
 // Fabric Loom 镜像配置（为无法直连 Mojang 服务器的环境使用 BMCLAPI 镜像）
 ext {
     loom_version_manifests = 'https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json'
@@ -50,9 +36,10 @@ repositories {
         url = 'https://maven.shedaniel.me/'
     }
     mavenCentral()
-	// Chunk Scanner 本地构建产物（需先 cd ../chunkscanner && ./gradlew build）
-	flatDir {
-		dirs "${chunkscannerDir}/build/libs"
+	// Chunk Scanner SNAPSHOT 制品发布到中央快照仓库（需此仓库才能解析 -SNAPSHOT 版本）
+	maven {
+		name = 'Maven Central Snapshots'
+		url = 'https://central.sonatype.com/repository/maven-snapshots/'
 	}
 }
 
@@ -63,11 +50,11 @@ dependencies {
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
     // Fabric API
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    modImplementation "net.fabricmc:fabric-api:fabric-api:${project.fabric_api_version}"
 
-    // Chunk Scanner — 读取 QShop 扫描数据（client 端）
+    // Chunk Scanner — 读取 QShop 扫描数据（client 端），从 Maven Central SNAPSHOT 拉取
     // 通过 IChunkDb.FactoryRegistry 工厂模式加载，不硬编码 BinaryChunkDb
-    modImplementation "${project.chunkscanner_group}:${project.chunkscanner_artifact}:${project.chunkscanner_version}"
+    modImplementation "${project.chunkscanner_group}:${project.chunkscanner_artifact}:${project.chunkscanner_default_version}"
 
     // schematic4j — 解析 .litematic / .schem / .schematic 原理图，用于生成购物清单
     // 普通 Java 库（非 mod），需 include 打进最终 jar
@@ -81,7 +68,7 @@ processResources {
 
 	filesMatching("fabric.mod.json") {
 		expand "version": version,
-		       "chunkscanner_version": chunkscanner_version
+		       "chunkscanner_version": project.chunkscanner_default_version
 	}
 }
 
@@ -109,7 +96,5 @@ publishing {
         create("mavenJava", MavenPublication) {
             from components.java
         }
-    }
-    repositories {
     }
 }

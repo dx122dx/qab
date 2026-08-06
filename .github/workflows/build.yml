@@ -14,12 +14,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           path: qab
-      - name: checkout chunkscanner (dependency)
-        uses: actions/checkout@v6
-        with:
-          repository: dx122dx/chunkscanner
-          ref: dev
-          path: chunkscanner
       - name: validate gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
       - name: setup jdk
@@ -28,18 +22,11 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
       - name: make gradle wrapper executable
-        run: |
-          chmod +x qab/gradlew
-          chmod +x chunkscanner/gradlew
+        run: chmod +x qab/gradlew
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
-      - name: build chunkscanner
-        working-directory: chunkscanner
-        run: ./gradlew build --no-daemon
       - name: build qab
         working-directory: qab
-        env:
-          CHUNKSCANNER_DIR: ../chunkscanner
         run: ./gradlew build --no-daemon
       - name: capture build artifacts
         uses: actions/upload-artifact@v7

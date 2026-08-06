@@ -2,7 +2,7 @@ name: Publish
 
 # 推送 git tag（形如 v1.0.0 / v1.0.0-dev / v1.0.0-beta.1）时自动构建并发布到
 # GitHub Release 与 Modrinth。版本号以 tag 为唯一真相源，CI 注入 gradle.properties 后构建。
-# qab 依赖 chunkscanner（flatDir），故先构建 chunkscanner 再构建 qab。
+# qab 依赖的 chunkscanner 已发布到 Maven Central（SNAPSHOT），不再需要本地 checkout/build。
 on:
   push:
     tags:
@@ -25,13 +25,6 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: checkout chunkscanner (dependency)
-        uses: actions/checkout@v6
-        with:
-          repository: dx122dx/chunkscanner
-          ref: dev
-          path: chunkscanner
-
       - name: validate gradle wrapper
         uses: gradle/actions/wrapper-validation@v6
 
@@ -42,9 +35,7 @@ jobs:
           distribution: 'temurin'
 
       - name: make gradle wrapper executable
-        run: |
-          chmod +x qab/gradlew
-          chmod +x chunkscanner/gradlew
+        run: chmod +x qab/gradlew
 
       - name: Derive version & channel from tag
         id: meta
@@ -66,14 +57,8 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: build chunkscanner
-        working-directory: chunkscanner
-        run: ./gradlew build --no-daemon
-
       - name: build qab
         working-directory: qab
-        env:
-          CHUNKSCANNER_DIR: ../chunkscanner
         run: ./gradlew build --no-daemon
 
       - name: Generate changelog from commits
@@ -89,14 +74,10 @@ jobs:
       - name: Publish to Modrinth & GitHub Release
         uses: Kira-NT/mc-publish@v3.3.0
         with:
-          # Modrinth —— 需在仓库 Settings > Secrets and variables 配置：
-          #   vars.MODRINTH_ID       = Modrinth 项目 slug 或 id
-          #   secrets.MODRINTH_TOKEN = Modrinth API Token
           modrinth-id: ${{ vars.MODRINTH_ID }}
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-          # 元数据（version 带 v 前缀，与 git tag 一致；mod 内部版本不含 v）
           name: QShop Auto Buy ${{ steps.meta.outputs.version }}
           version: ${{ steps.meta.outputs.tag }}
           version-type: ${{ steps.meta.outputs.version_type }}
@@ -105,5 +86,4 @@ jobs:
           loaders: fabric
           changelog-file: qab/changelog_gen.md
 
-          # 仅上传主 jar，排除 -sources
           files: qab/build/libs/!(*-sources).jar
