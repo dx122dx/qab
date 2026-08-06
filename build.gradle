@@ -17,6 +17,9 @@ if (csPropsFile.exists()) {
     project.ext.chunkscanner_version = project.chunkscanner_default_version
 }
 
+// Chunk Scanner 本地依赖目录：默认 ../chunkscanner，CI 用 CHUNKSCANNER_DIR 指向 checkout 目录
+def chunkscannerDir = System.getenv("CHUNKSCANNER_DIR") ?: "${rootDir}/../chunkscanner"
+
 // Fabric Loom 镜像配置（为无法直连 Mojang 服务器的环境使用 BMCLAPI 镜像）
 ext {
     loom_version_manifests = 'https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json'
@@ -47,10 +50,10 @@ repositories {
         url = 'https://maven.shedaniel.me/'
     }
     mavenCentral()
-    // Chunk Scanner 本地构建产物（需先 cd ../chunkscanner && ./gradlew build）
-    flatDir {
-        dirs "${rootDir}/../chunkscanner/build/libs"
-    }
+	// Chunk Scanner 本地构建产物（需先 cd ../chunkscanner && ./gradlew build）
+	flatDir {
+		dirs "${chunkscannerDir}/build/libs"
+	}
 }
 
 dependencies {
@@ -76,9 +79,10 @@ processResources {
     def version = project.version
     inputs.property "version", version
 
-    filesMatching("fabric.mod.json") {
-        expand "version": version
-    }
+	filesMatching("fabric.mod.json") {
+		expand "version": version,
+		       "chunkscanner_version": chunkscanner_version
+	}
 }
 
 tasks.withType(JavaCompile).configureEach {

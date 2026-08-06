@@ -72,6 +72,8 @@ jobs:
 
       - name: build qab
         working-directory: qab
+        env:
+          CHUNKSCANNER_DIR: ../chunkscanner
         run: ./gradlew build --no-daemon
 
       - name: Generate changelog from commits
