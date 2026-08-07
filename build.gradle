@@ -19,6 +19,7 @@ loom {
 }
 
 repositories {
+    mavenLocal()
     maven {
         name = 'BMCLAPI Minecraft Libraries'
         url = 'https://bmclapi2.bangbang93.com/libraries/'
@@ -54,7 +55,10 @@ dependencies {
 
     // Chunk Scanner — 读取 QShop 扫描数据（client 端），从 Maven Central SNAPSHOT 拉取
     // 通过 IChunkDb.FactoryRegistry 工厂模式加载，不硬编码 BinaryChunkDb
-    modImplementation "${project.chunkscanner_group}:${project.chunkscanner_artifact}:${project.chunkscanner_default_version}"
+    // changing=true 确保始终拉取最新 chunkscanner SNAPSHOT（强制更新依赖版本）
+    modImplementation("${project.chunkscanner_group}:${project.chunkscanner_artifact}:${project.chunkscanner_default_version}") {
+        changing = true
+    }
 
     // schematic4j — 解析 .litematic / .schem / .schematic 原理图，用于生成购物清单
     // 普通 Java 库（非 mod），需 include 打进最终 jar
