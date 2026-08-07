@@ -6,6 +6,8 @@ import com.billy65536.qab.automatic.ShoppingRunner;
 import com.billy65536.qab.config.QabConfig;
 import com.billy65536.qab.planner.model.ShoppingPlan;
 
+import net.minecraft.client.MinecraftClient;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,7 +24,10 @@ import org.slf4j.LoggerFactory;
  * 必须由 QAB 自己持有待办队列、一次只向导航投递一个目标 ——
  * chunkscanner 的 {@code clear()} 等同 {@code stop()}，没有插队/移除单目标的 API。</p>
  *
- * <p>维度切换由 chunkscanner 导航自动暂停/恢复。</p>
+ * <p><b>维度</b>：坐标只在其所属维度内有意义，因此投递目标前必须做维度匹配
+ * （{@link #inDimension(MinecraftClient, String)}）。chunkscanner 导航只会在
+ * 「启动后玩家换了维度」时暂停，并不校验目标本身属于哪个维度，跨维度目标会让
+ * Baritone 朝当前维度的同名坐标寻路。</p>
  *
  * <p><b>注意</b>：Baritone 路径执行是全局唯一资源。若玩家同时启动了 {@code /cs nav}，
  * 两边会互相抢占寻路目标。{@link #stop()} 可随时中止 QAB 侧导航。</p>
@@ -150,6 +155,47 @@ public final class CsNavigationHelper {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    /**
+     * 玩家当前所在维度 id，如 {@code minecraft:overworld}。
+     *
+     * <p>取 {@code world.getRegistryKey()}（世界 id）而非 {@code getDimensionKey()}（维度类型 id）：
+     * 前者才是 chunkscanner 数据库与 {@code /qab stash add} 写入位置字符串时用的那一个，
+     * 二者对自定义维度并不相等。</p>
+     *
+     * @return 维度 id；尚未进入世界时返回 null
+     */
+    public static String currentDimension(MinecraftClient client) {
+        if (client == null || client.world == null) return null;
+        return client.world.getRegistryKey().getValue().toString();
+    }
+
+    /**
+     * 归一化维度 id：去空白，缺省命名空间时补 {@code minecraft:}。
+     *
+     * @return 归一化结果；输入为 null 或空白时返回 null
+     */
+    public static String normalizeDimension(String dimensionId) {
+        if (dimensionId == null) return null;
+        String s = dimensionId.trim();
+        if (s.isEmpty()) return null;
+        return s.indexOf(':') >= 0 ? s : "minecraft:" + s;
+    }
+
+    /**
+     * 目标维度是否就是玩家当前所在维度。
+     *
+     * <p>缺失维度标注（null/空）的旧数据视为匹配，避免因数据不全直接卡死流程。</p>
+     *
+     * @param dimensionId 目标维度 id，可省略命名空间
+     * @return 匹配返回 true；玩家不在世界中返回 false
+     */
+    public static boolean inDimension(MinecraftClient client, String dimensionId) {
+        String target = normalizeDimension(dimensionId);
+        if (target == null) return true;
+        String current = currentDimension(client);
+        return current != null && current.equals(target);
     }
 
     /**

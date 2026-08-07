@@ -166,6 +166,15 @@ public final class QShopBuyCondition implements NavigationCondition {
     public boolean isSatisfied(MinecraftClient client) {
         if (arrived) return true;
         if (client.player == null || client.world == null) return false;
+
+        // 维度守卫：同一组坐标在每个维度都存在，跨维度时距离判定必定误判"到达"，
+        // 结果就是对着另一个维度的随机方块点击。不匹配就直接不算到达。
+        if (!CsNavigationHelper.inDimension(client, task.getDimensionId())) {
+            blockedTicks = 0;
+            sightMsgSent = false;
+            return false;
+        }
+
         ClientPlayerEntity player = client.player;
 
         double reach = config.getClickReachDist(); // 已被 clamp 到服务端上限以下（≤4.0）
@@ -239,6 +248,10 @@ public final class QShopBuyCondition implements NavigationCondition {
             return;
         }
         if (!arrived) return;
+
+        // 维度守卫：到店后玩家又换了维度（传送/传送门），此刻的坐标已不是那块告示牌。
+        // 冻结购买时序，由 ShoppingRunner 收回任务重新排队。
+        if (!CsNavigationHelper.inDimension(client, task.getDimensionId())) return;
 
         // 1) 转向告示牌形状中心（限速、可见的类人转头）
         Vec3d target = aimTarget(client);

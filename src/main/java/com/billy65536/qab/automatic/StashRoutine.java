@@ -41,6 +41,11 @@ import java.util.List;
  * <p>当前箱子放不下时，按 {@link QabConfig#getStashPositions()} 的顺序切到下一个存货点，
  * 全部试完仍放不下则以 {@link Result#ALL_FULL} 结束。不做世界扫描。</p>
  *
+ * <h3>维度匹配</h3>
+ * <p>只使用位于玩家<b>当前维度</b>的存货点：别的维度里的箱子够不着，同一组坐标在本维度
+ * 又是另一个方块。全部点位都不在本维度时以 {@link Result#WRONG_DIMENSION} 结束；
+ * 流程途中玩家换维度则改判到新维度里的点位。</p>
+ *
  * <p><b>Baritone 是全局唯一资源</b>：本类导航期间，购买导航必须处于停止状态。
  * 由 {@link ShoppingRunner} 保证二者不并发。</p>
  */
@@ -82,7 +87,9 @@ public final class StashRoutine {
         /** 全部点位都无法抵达/开启。 */
         UNREACHABLE,
         /** 背包本来就没东西可搬。 */
-        NOTHING_TO_STASH
+        NOTHING_TO_STASH,
+        /** 配置的存货点都不在玩家当前维度。 */
+        WRONG_DIMENSION
     }
 
     private final QabConfig config;
@@ -110,6 +117,13 @@ public final class StashRoutine {
 
     /** 本轮已成功搬走的格数，用于日志与「是否真的腾出空间」判定。 */
     private int movedSlots;
+
+    /** 因不在当前维度而被跳过的存货点数量。 */
+    private int otherDimSkips;
+    /** 是否真的尝试过某个存货点（用于区分「都装满了」和「都不在本维度」）。 */
+    private boolean triedAnyPosition;
+    /** 流程中途玩家换过维度。 */
+    private boolean dimensionChanged;
 
     public StashRoutine(QabConfig config) {
         this.config = config;
@@ -154,6 +168,9 @@ public final class StashRoutine {
         }
         posIndex = -1;
         movedSlots = 0;
+        otherDimSkips = 0;
+        triedAnyPosition = false;
+        dimensionChanged = false;
         return advanceToNextStash(client);
     }
 
@@ -165,6 +182,20 @@ public final class StashRoutine {
     public void tick(MinecraftClient client) {
         if (phase == Phase.IDLE || phase == Phase.DONE) return;
         if (client.player == null || client.world == null) return;
+
+        // 维度守卫：玩家中途换了维度，当前箱子坐标在新维度里是另一个方块，
+        // 继续走位/开箱只会点到无关方块。改判到下一个（本维度的）存货点。
+        if (currentDimension != null && !CsNavigationHelper.inDimension(client, currentDimension)) {
+            LOGGER.warn("Player left dimension {} during stash routine, switching stash point.",
+                    currentDimension);
+            if (nav != null && nav.isActive()) nav.stop();
+            if (phase == Phase.TRANSFERRING) closeScreen(client);
+            // 旧维度里试过的点位不再算数，收尾原因应归到维度而非「箱子都满了」
+            dimensionChanged = true;
+            triedAnyPosition = false;
+            tryNextOrFail(client, Result.WRONG_DIMENSION);
+            return;
+        }
 
         switch (phase) {
             case NAVIGATING -> tickNavigating(client);
@@ -370,6 +401,12 @@ public final class StashRoutine {
                 LOGGER.warn("Skipping unparseable stash position: {}", raw);
                 continue;
             }
+            // 维度匹配：别的维度里的箱子够不着，直接跳过（自动跨维度寻路不可靠）
+            if (!CsNavigationHelper.inDimension(client, pp.dimensionId)) {
+                otherDimSkips++;
+                LOGGER.debug("Skipping stash position in another dimension: {}", raw);
+                continue;
+            }
 
             currentChest = new BlockPos(pp.x, pp.y, pp.z);
             currentDimension = pp.dimensionId;
@@ -378,6 +415,8 @@ public final class StashRoutine {
             alignedTicks = 0;
             aimTarget = null;
             openWaitTicks = 0;
+
+            triedAnyPosition = true;
 
             // 已经在旁边就直接开箱，省一次导航
             if (client.player != null
@@ -396,7 +435,13 @@ public final class StashRoutine {
             return true;
         }
 
-        finish(result == null ? Result.ALL_FULL : result);
+        Result fallback = result;
+        if (fallback == null) {
+            // 一个点位都没试过、全被维度过滤掉了 → 是维度问题而不是箱子满了
+            fallback = (!triedAnyPosition && (otherDimSkips > 0 || dimensionChanged))
+                    ? Result.WRONG_DIMENSION : Result.ALL_FULL;
+        }
+        finish(fallback);
         return false;
     }
 

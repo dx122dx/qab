@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Iterator;
 
 /**
  * 购买流程编排器：QAB 自己持有待办队列，一次只向 chunkscanner 投递<b>一个</b>目标。
@@ -39,6 +40,16 @@ import java.util.Deque;
  *   <li>装得下 → 全额购买；</li>
  *   <li>只装得下一部分 → 买这部分，剩余量回插队首，随后触发存货，存完回来接着买；</li>
  *   <li>一个都装不下 → 不下单，整单回插队首，直接去存货。</li>
+ * </ul>
+ *
+ * <h3>维度匹配</h3>
+ * <p>坐标只在其所属维度内有意义，因此<b>只投递位于玩家当前维度的目标</b>：</p>
+ * <ul>
+ *   <li>队列里优先挑选本维度的目标，跨维度的留到后面；</li>
+ *   <li>本维度已无目标 → 进入等待态并提示玩家自行前往（自动跨维度寻路不可靠，
+ *       不做尝试），玩家一旦进入匹配维度即自动继续；</li>
+ *   <li>途中玩家离开目标维度 → 收回当前任务重新排队，避免 Baritone
+ *       朝新维度里的同名坐标乱跑。</li>
  * </ul>
  */
 public final class ShoppingRunner {
@@ -79,6 +90,13 @@ public final class ShoppingRunner {
 
     /** 存货子流程，非 null 表示正在存货（此时购买导航已停止）。 */
     private StashRoutine stash;
+
+    /**
+     * 正在等待玩家前往的维度；非 null 表示流程因维度不匹配暂停。
+     *
+     * <p>自动跨维度寻路（找传送门、过下界通道）不可靠，宁可停下来让玩家自己过去。</p>
+     */
+    private String awaitingDimension;
 
     // ---- 统计 ----
     private int totalTasks;
@@ -143,6 +161,7 @@ public final class ShoppingRunner {
         pending.clear();
         currentTask = null;
         currentCondition = null;
+        awaitingDimension = null;
         running = false;
     }
 
@@ -176,12 +195,32 @@ public final class ShoppingRunner {
             return;
         }
 
+        // 维度等待：本维度已无可执行目标，等玩家自己传送过去
+        if (awaitingDimension != null) {
+            if (!hasTaskInCurrentDimension(client)) return;
+            LOGGER.info("Entered dimension {}, resuming shopping.",
+                    CsNavigationHelper.currentDimension(client));
+            awaitingDimension = null;
+            notifyPlayer(client, Text.translatable("qab.msg.dim_resumed",
+                    CsNavigationHelper.currentDimension(client)).formatted(Formatting.AQUA));
+            dispatchNext(client);
+            return;
+        }
+
         if (currentTask == null) {
             dispatchNext(client);
             return;
         }
 
         QShopBuyCondition cond = currentCondition;
+
+        // 维度守卫：玩家中途离开了目标维度（传送门/传送指令），当前目标已不可达。
+        // 已在结算中的任务（命令待发/已成交）不打断，交给正常的结果处理流程。
+        if ((cond == null || (!cond.isResolved() && !cond.hasPendingCommand()))
+                && !CsNavigationHelper.inDimension(client, currentTask.getDimensionId())) {
+            handleDimensionLeft(client);
+            return;
+        }
 
         // 已到店：导航已把目标出队并取消 Baritone，
         // 「对准 → 点击 → 发购买命令」这段时序由本编排器逐 tick 驱动。
@@ -223,11 +262,16 @@ public final class ShoppingRunner {
 
     // ==================== 内部 ====================
 
-    /** 取出下一个任务投递给导航；队列空则收尾。 */
+    /** 取出下一个<b>本维度</b>的任务投递给导航；队列空则收尾，只剩跨维度目标则转入等待。 */
     private void dispatchNext(MinecraftClient client) {
-        BuyTask task = pending.pollFirst();
-        if (task == null) {
+        if (pending.isEmpty()) {
             finishAll(client);
+            return;
+        }
+
+        BuyTask task = pollNextInCurrentDimension(client);
+        if (task == null) {
+            awaitDimension(client);
             return;
         }
 
@@ -244,6 +288,75 @@ public final class ShoppingRunner {
         nav.start();
 
         LOGGER.info("Dispatched {} ({} remaining).", task, pending.size());
+    }
+
+    /**
+     * 取出队列中第一个位于玩家当前维度的任务（保持原有先后顺序）。
+     *
+     * <p>不过滤维度会让 Baritone 朝当前维度里的同名坐标寻路，到达后对着无关方块乱点。
+     * 跨维度的目标保留在队列中，等玩家进入对应维度再执行。</p>
+     *
+     * @return 匹配的任务；玩家维度未知时退化为队首任务；无匹配返回 null
+     */
+    private BuyTask pollNextInCurrentDimension(MinecraftClient client) {
+        if (CsNavigationHelper.currentDimension(client) == null) {
+            return pending.pollFirst();
+        }
+        for (Iterator<BuyTask> it = pending.iterator(); it.hasNext(); ) {
+            BuyTask task = it.next();
+            if (CsNavigationHelper.inDimension(client, task.getDimensionId())) {
+                it.remove();
+                return task;
+            }
+        }
+        return null;
+    }
+
+    /** 队列中是否还有位于玩家当前维度的任务。 */
+    private boolean hasTaskInCurrentDimension(MinecraftClient client) {
+        for (BuyTask task : pending) {
+            if (CsNavigationHelper.inDimension(client, task.getDimensionId())) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 队列里只剩其他维度的目标：转入等待态并提示玩家自行前往。
+     *
+     * <p>不中止流程 —— 玩家过去后 {@link #tick} 会自动继续；不想等就 {@code /qab nav stop}。</p>
+     */
+    private void awaitDimension(MinecraftClient client) {
+        BuyTask next = pending.peekFirst();
+        if (next == null) {
+            finishAll(client);
+            return;
+        }
+
+        String target = next.getDimensionId();
+        if (!java.util.Objects.equals(target, awaitingDimension)) {
+            LOGGER.info("No target in current dimension {}; waiting for player to enter {} ({} pending).",
+                    CsNavigationHelper.currentDimension(client), target, pending.size());
+            notifyPlayer(client, Text.translatable("qab.msg.dim_wait",
+                    pending.size(), target, String.valueOf(CsNavigationHelper.currentDimension(client)))
+                    .formatted(Formatting.YELLOW));
+        }
+        awaitingDimension = target;
+    }
+
+    /** 玩家中途离开目标维度：停导航、把任务放回队首，再按维度重新挑一个。 */
+    private void handleDimensionLeft(MinecraftClient client) {
+        BuyTask task = currentTask;
+        LOGGER.info("Player left dimension {} while heading to {}; re-queuing task.",
+                task.getDimensionId(), task.getSignPos());
+
+        ChunkScannerNavigation nav = CsNavigationHelper.navigationIfPresent();
+        if (nav != null && nav.isActive()) {
+            nav.stop();
+        }
+        currentTask = null;
+        currentCondition = null;
+        pending.addFirst(task);
+        dispatchNext(client);
     }
 
     /** 处理当前任务的执行结果。 */
@@ -353,6 +466,12 @@ public final class ShoppingRunner {
                         .formatted(Formatting.RED));
                 abortWithReason(client);
             }
+            case WRONG_DIMENSION -> {
+                notifyPlayer(client, Text.translatable("qab.msg.stash_wrong_dimension",
+                        String.valueOf(CsNavigationHelper.currentDimension(client)))
+                        .formatted(Formatting.RED));
+                abortWithReason(client);
+            }
             default -> {
                 notifyPlayer(client, Text.translatable("qab.msg.stash_unreachable")
                         .formatted(Formatting.RED));
@@ -374,6 +493,7 @@ public final class ShoppingRunner {
         running = false;
         currentTask = null;
         currentCondition = null;
+        awaitingDimension = null;
         LOGGER.info("Shopping complete: {}/{} task(s), {} item(s) bought, {} skipped.",
                 completedTasks, totalTasks, boughtItems, skippedTasks);
         notifyPlayer(client, Text.translatable("qab.msg.buy_complete",
