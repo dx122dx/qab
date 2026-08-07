@@ -40,6 +40,7 @@
     "qab.msg.buy_complete": "自动购买完成：%d/%d 个目标，共买入 %d 件，跳过 %d 个。",
     "qab.msg.buy_aborted": "自动购买已中止，剩余 %d 个目标未完成（已买入 %d 件）。",
     "qab.msg.buy_aim_failed": "已到达商店 (%s)，但始终无法对准告示牌（可能被遮挡或牌子已不存在），已跳过。",
+    "qab.msg.buy_sight_blocked": "已到达商店 (%s)，但视线被遮挡；将在超时后尝试对准，若仍点不到则跳过。",
     "qab.msg.stash_started": "背包空间不足，正在前往存货点……",
     "qab.msg.stash_done": "存货完成，已存入 %d 组物品，继续购买。",
     "qab.msg.stash_all_full": "所有存货点都已装满（本次存入 %d 组），无法继续购买。",

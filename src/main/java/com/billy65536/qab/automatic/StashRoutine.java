@@ -50,8 +50,6 @@ public final class StashRoutine {
     /** 独立导航实例名，与购买导航（"qab"）隔离，避免路径点分组混淆。 */
     private static final String NAV_NAME = "qab-stash";
 
-    /** 到位判定的额外宽限距离（方块）。 */
-    private static final double ARRIVE_SLACK = 1.5;
     /** 对准箱子的最大尝试 tick 数，超时换下一个点位。 */
     private static final int MAX_AIM_TICKS = 80;
     /** 开箱后等待 GUI 出现的最大 tick 数。 */
@@ -193,7 +191,7 @@ public final class StashRoutine {
 
         // 已经站得够近就不必等导航结束（Baritone 可能停在稍远处）
         double reach = config.getClickReachDist();
-        if (BlockAimHelper.distanceTo(player, currentChest) <= reach + ARRIVE_SLACK) {
+        if (BlockAimHelper.reachedForInteraction(client, player, currentChest, reach)) {
             if (nav != null && nav.isActive()) nav.stop();
             enterOpening();
             return;
@@ -383,8 +381,8 @@ public final class StashRoutine {
 
             // 已经在旁边就直接开箱，省一次导航
             if (client.player != null
-                    && BlockAimHelper.distanceTo(client.player, currentChest)
-                    <= config.getClickReachDist() + ARRIVE_SLACK) {
+                    && BlockAimHelper.reachedForInteraction(client, client.player, currentChest,
+                            config.getClickReachDist())) {
                 enterOpening();
                 return true;
             }

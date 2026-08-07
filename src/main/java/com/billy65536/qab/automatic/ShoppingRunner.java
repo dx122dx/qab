@@ -13,6 +13,7 @@ import net.minecraft.item.Item;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.World;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

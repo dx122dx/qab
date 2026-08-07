@@ -15,7 +15,11 @@ import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.shape.VoxelShape;
 import net.minecraft.world.BlockView;
+import net.minecraft.block.SignBlock;
+import net.minecraft.block.WallSignBlock;
+import net.minecraft.util.math.Direction;
 import net.minecraft.world.RaycastContext;
+import net.minecraft.world.World;
 
 /**
  * 方块对准工具：把视角转向目标方块、把朝向同步给服务器，并用准星射线确认真的指到了它。
@@ -42,9 +46,10 @@ import net.minecraft.world.RaycastContext;
  *   <li><b>朝向要主动发包</b>。客户端的朝向随移动包在<b>玩家 tick</b> 中发出，而模组逻辑跑在
  *       {@code END_CLIENT_TICK}，晚于发包。若同一 tick 内改完朝向就点击，服务器收到攻击包时
  *       记录的仍是旧朝向。必须显式补发 {@link #syncRotation}。</li>
- *   <li><b>转视角前必须先停 Baritone</b>。Baritone 的 LookBehavior 每 tick 会按路径改写朝向，
- *       并抢在移动包之前生效；寻路未停时无论怎么设 yaw/pitch，服务器看到的都是 Baritone 的朝向。
- *       调用方须先让导航出队（Baritone 随之取消）再进入对准流程。</li>
+     *   <li><b>转视角前必须先停 Baritone</b>。Baritone <b>只负责移动身体、不会转头看目标</b>
+     *       （见提交 77ce879 的改动说明），因此到达后必须由我们对准并主动发包同步朝向。
+     *       仍要先让导航出队再进入对准流程，是因为：玩家必须静止才能精确转头，
+     *       且若 Baritone 仍在寻路，它下一步会把玩家带离目标点。</li>
  * </ol>
  */
 public final class BlockAimHelper {
@@ -302,5 +307,90 @@ public final class BlockAimHelper {
                 crosshair, los,
                 player.getYaw(), want == null ? Float.NaN : want.yaw(),
                 player.getPitch(), want == null ? Float.NaN : want.pitch());
+    }
+
+    // ==================== 到达判定 ====================
+
+    /**
+     * 玩家眼睛到目标方块{@linkplain #aimPoint 对准点}（形状中心）的距离。
+     *
+     * <p>"是否已走到可交互距离内"的判定应用本方法而非 {@link #distanceTo}：墙上告示牌的形状中心
+     * 与几何中心相差约 0.4 格，用几何中心会系统性高估距离。</p>
+     *
+     * @return 距离；参数为 null 时返回 {@link Double#MAX_VALUE}
+     */
+    public static double distanceToAimPoint(ClientPlayerEntity player, BlockPos pos) {
+        if (player == null || pos == null) return Double.MAX_VALUE;
+        return player.getEyePos().distanceTo(aimPoint(player.getWorld(), pos));
+    }
+
+    /**
+     * 玩家是否已走到可交互位置：在 {@code reach} 之内且视线（不依赖朝向）无遮挡。
+     *
+     * <p>用于"到达判定"，与 {@link #crosshairHit}（依赖准星朝向）互补。
+     * 到达判定发生在主动对准之前，此刻准星由玩家自己控制、与牌子无关，用准星会永不满足
+     * （即提交 77ce879 修掉的"导航到达后无法点击告示牌、队列卡死"历史 bug，不可回退）。</p>
+     *
+     * @param reach 最大可交互距离（应已被 clamp 到服务端上限以下）
+     * @return 在范围内且视线通畅时为 true
+     */
+    public static boolean reachedForInteraction(MinecraftClient client,
+                                                ClientPlayerEntity player,
+                                                BlockPos pos,
+                                                double reach) {
+        return lineOfSight(client, player, pos, reach) != null;
+    }
+
+    // ==================== 站位推算 ====================
+
+    /**
+     * 计算玩家应站立（脚下方块坐标）以阅读告示牌的位置：牌子正前方、降至实地、且有头顶空间。
+     *
+     * <p>墙上告示牌用 {@code HORIZONTAL_FACING} 取正前方；落地告示牌用 {@code ROTATION}（0-15）
+     * 经 {@link Direction#fromRotation(double)} 推出朝向。这样 Baritone 的 {@code GoalBlock}
+     * 就能落在玩家真正可站的地面上，而不是试图站到牌子方块本身（高处牌子站不上去）。</p>
+     *
+     * @param world   世界（必须能读到 {@code pos} 处方块状态；维度不符时调用方应传 null 以回退）
+     * @param signPos 告示牌坐标
+     * @return 可站立的脚下方块坐标；无法推算时返回 null
+     */
+    public static BlockPos standInFrontOf(World world, BlockPos signPos) {
+        if (world == null || signPos == null) return null;
+        Direction facing = signFacing(world, signPos);
+        if (facing == null) return null;
+
+        // 候选 1：牌子正前方一格，逐步下沉寻找实地
+        BlockPos feet = signPos.offset(facing);
+        for (int drop = 0; drop < 6; drop++) {
+            if (isStandable(world, feet)) return feet;
+            feet = feet.down();
+        }
+        // 候选 2：反方向（朝向约定不确定时兜底）
+        feet = signPos.offset(facing.getOpposite());
+        for (int drop = 0; drop < 6; drop++) {
+            if (isStandable(world, feet)) return feet;
+            feet = feet.down();
+        }
+        return null;
+    }
+
+    /** 读取告示牌朝向：墙上牌用 {@code HORIZONTAL_FACING}，落地牌用 {@code ROTATION}。 */
+    private static Direction signFacing(World world, BlockPos signPos) {
+        BlockState state = world.getBlockState(signPos);
+        if (state.contains(WallSignBlock.FACING)) {
+            return state.get(WallSignBlock.FACING);
+        }
+        if (state.contains(SignBlock.ROTATION)) {
+            int rot = state.get(SignBlock.ROTATION);
+            return Direction.fromRotation((double) rot * 360.0 / 16.0);
+        }
+        return null;
+    }
+
+    /** 脚下方块是否"可站立"：自身是空气、头顶有空气、正下方是实心方块。 */
+    private static boolean isStandable(World world, BlockPos feet) {
+        return world.getBlockState(feet).isAir()
+                && world.getBlockState(feet.up()).isAir()
+                && world.getBlockState(feet.down()).isSolidBlock(world, feet.down());
     }
 }

@@ -23,7 +23,11 @@ import java.util.List;
  *   <li>{@code buyDelayMs}：到达告示牌后、发送购买命令前的等待毫秒数（默认 500）；</li>
  *   <li>{@code buyCommand}：到达后执行的购买命令模板，
  *       形如 {@code /qs amount {count}}，{@code {count}} 被替换为本次购买数量；</li>
- *   <li>{@code clickReachDist}：判定"准星可点击到告示牌"的最大距离（默认 5.0 方块）；</li>
+     *   <li>{@code clickReachDist}：判定"准星可点击到告示牌"的最大距离（默认 4.0 方块）。
+     *       默认 4.0 对应 MC 1.20.1 原版服务端方块交互距离上限约 4.5 格的安全余量；
+     *       部分服务器/模组会修改该上限，可按实际情况调大，不做硬上限限制；</li>
+ *   <li>{@code sightBlockedTimeoutTicks}：到店判定中视线被遮挡时的最大等待 tick 数（默认 60，
+ *       超时后按"已到达"处理交由对准流程收尾，避免卡死）；</li>
  *   <li>{@code aimDegPerTick}：到店后转视角的每 tick 最大角度（默认 30°，值越小转头越"像人"）；</li>
  *   <li>{@code aimSettleTicks}：精确对准后、点击前的静置 tick 数（默认 2），
  *       给服务端留出接收新朝向的时间。</li>
@@ -54,9 +58,12 @@ public final class QabConfig {
 
     private static final int DEFAULT_BUY_DELAY_MS = 500;
     private static final String DEFAULT_BUY_COMMAND = "/qs amount {count}";
-    private static final double DEFAULT_CLICK_REACH_DIST = 5.0;
+    private static final double DEFAULT_CLICK_REACH_DIST = 4.0;
     private static final float DEFAULT_AIM_DEG_PER_TICK = 30.0F;
     private static final int DEFAULT_AIM_SETTLE_TICKS = 2;
+    private static final int DEFAULT_SIGHT_BLOCKED_TIMEOUT_TICKS = 60;
+    /** 视线被挡超时下限：太小会在绕路途中经过牌子附近时误判到达。 */
+    private static final int MIN_SIGHT_BLOCKED_TIMEOUT_TICKS = 20;
 
     /** 转头速度下限：太小会让对准迟迟完不成，触发超时放弃。 */
     private static final float MIN_AIM_DEG_PER_TICK = 5.0F;
@@ -80,6 +87,8 @@ public final class QabConfig {
     private String buyCommand = DEFAULT_BUY_COMMAND;
     /** 准星可点击告示牌的最大距离（方块）。 */
     private double clickReachDist = DEFAULT_CLICK_REACH_DIST;
+    /** 到店判定中视线被遮挡时的最大等待 tick 数；超时后按"已到达"处理交由对准流程收尾。 */
+    private int sightBlockedTimeoutTicks = DEFAULT_SIGHT_BLOCKED_TIMEOUT_TICKS;
     /** 到店后转视角的每 tick 最大角度（度）。 */
     private float aimDegPerTick = DEFAULT_AIM_DEG_PER_TICK;
     /** 精确对准后、发起点击前的静置 tick 数。 */
@@ -133,6 +142,9 @@ public final class QabConfig {
         if (buyDelayMs < 0) buyDelayMs = DEFAULT_BUY_DELAY_MS;
         if (buyCommand == null || buyCommand.isBlank()) buyCommand = DEFAULT_BUY_COMMAND;
         if (clickReachDist <= 0) clickReachDist = DEFAULT_CLICK_REACH_DIST;
+        if (sightBlockedTimeoutTicks < MIN_SIGHT_BLOCKED_TIMEOUT_TICKS) {
+            sightBlockedTimeoutTicks = MIN_SIGHT_BLOCKED_TIMEOUT_TICKS;
+        }
 
         if (aimDegPerTick < MIN_AIM_DEG_PER_TICK) {
             aimDegPerTick = aimDegPerTick <= 0 ? DEFAULT_AIM_DEG_PER_TICK : MIN_AIM_DEG_PER_TICK;
@@ -203,6 +215,11 @@ public final class QabConfig {
 
     public double getClickReachDist() {
         return clickReachDist;
+    }
+
+    /** 到店判定中视线被遮挡时的最大等待 tick 数。 */
+    public int getSightBlockedTimeoutTicks() {
+        return sightBlockedTimeoutTicks;
     }
 
     /** 到店后转视角的每 tick 最大角度（度）。 */

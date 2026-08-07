@@ -15,6 +15,8 @@ import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.math.Vec3d;
 
 import org.slf4j.Logger;
@@ -31,9 +33,9 @@ import org.slf4j.LoggerFactory;
  *       每 tick 调用 {@link #tick(MinecraftClient)} 驱动。</li>
  * </ul>
  *
- * <p><b>为什么必须这样切</b>：Baritone 的 LookBehavior 每 tick 都会按路径改写玩家朝向，
- * 且抢在移动包之前生效。寻路没停就转视角，客户端看着像在抽搐、服务器收到的始终是 Baritone 的朝向，
- * 表现为"人到了、头没转向牌子、点不出商店"。所以要先让导航出队把 Baritone 停掉，再从容对准。</p>
+     * <p><b>为什么必须这样切</b>：Baritone <b>只负责移动身体、不会转头看目标</b>（见提交 77ce879 的改动说明），
+     * 因此到达后必须由我们对准并主动发包同步朝向。仍然要先让导航出队把 Baritone 停掉，是因为
+     * 玩家必须静止才能精确转头，且 Baritone 仍在寻路时会把玩家带离目标点。</p>
  *
  * <h3>购买时序（look-then-do）</h3>
  * <ol>
@@ -52,10 +54,13 @@ public final class QShopBuyCondition implements NavigationCondition {
     private static final Logger LOGGER = LoggerFactory.getLogger("qab.buy");
 
     /**
-     * 到店判定的额外宽限距离（方块）。
-     * Baritone 停下的位置未必精确等于目标点，留出余量避免刚好差一点点就不判定到达。
+     * 视线被挡时累计的 tick 数；达到配置的超时才按"已到达"处理。
+     * 仅在「已在可交互距离内、但视线被挡」时累加，玩家仍在赶路（超距）时不累加。
      */
-    private static final double ARRIVE_SLACK = 1.5;
+    private int blockedTicks;
+
+    /** 是否已向玩家发过一次"视线被挡"提示，避免每 tick 刷屏。 */
+    private boolean sightMsgSent;
 
     /** 到店后对准告示牌的最大 tick 数，超时放弃该目标以免队列永久卡死。 */
     private static final int MAX_AIM_TICKS = 100;
@@ -144,26 +149,66 @@ public final class QShopBuyCondition implements NavigationCondition {
     // ==================== 到店判定 ====================
 
     /**
-     * 只判断玩家是否已走到可交互距离内。
+     * 判断玩家是否已走到可交互位置：<b>在 {@code clickReachDist} 之内</b>且<b>视线无遮挡</b>。
      *
-     * <p>返回 true 后 chunkscanner 会出队并取消 Baritone，购买动作交由
-     * {@link #tick(MinecraftClient)} 完成。这里<b>不</b>做视线检查：
-     * 视线被挡是"到店后调整"的问题，若在此处返回 false，Baritone 会一直
-     * 试图站到告示牌所在方块上，反而把玩家挤来挤去、永远对不准。</p>
+     * <p>返回 true 后 chunkscanner 会出队并取消 Baritone，购买动作交由 {@link #tick(MinecraftClient)} 完成。</p>
+     *
+     * <p>判定用不依赖朝向的 {@link BlockAimHelper#lineOfSight}（沿眼睛→牌子形状中心发射线），
+     * <b>不能</b>用准星射线（{@link BlockAimHelper#crosshairHit}）：本方法在「主动对准之前」每 tick 被调用，
+     * 此刻准星由玩家自己控制、与牌子无关，用准星判定会永不满足——正是提交 77ce879 修掉的
+     * "导航到达后无法点击告示牌、队列卡死"历史 bug，不可回退。</p>
+     *
+     * <p>视线被挡时不立即放弃：累计阻塞 tick 达 {@link QabConfig#getSightBlockedTimeoutTicks()} 后按"已到达"处理，
+     * 交给 {@link #tick(MinecraftClient)} 的对准流程；若仍点不到，会在 {@link #giveUpAiming} 超时后跳过，
+     * 避免 Baritone 反复朝站不上去的牌子方块寻路、把玩家挤在墙边抖动。</p>
      */
     @Override
     public boolean isSatisfied(MinecraftClient client) {
         if (arrived) return true;
         if (client.player == null || client.world == null) return false;
+        ClientPlayerEntity player = client.player;
 
-        double reach = config.getClickReachDist();
-        if (BlockAimHelper.distanceTo(client.player, signPos) > reach + ARRIVE_SLACK) {
-            return false;
+        double reach = config.getClickReachDist(); // 已被 clamp 到服务端上限以下（≤4.0）
+
+        // 已在可交互距离内且视线通畅：到达，导航出队、停 Baritone，交给定时对准。
+        if (BlockAimHelper.reachedForInteraction(client, player, signPos, reach)) {
+            arrived = true;
+            LOGGER.info("Arrived at QShop sign {}, taking over aiming (Baritone released).", signPos);
+            return true;
         }
 
-        arrived = true;
-        LOGGER.info("Arrived at QShop sign {}, taking over aiming (Baritone released).", signPos);
-        return true;
+        // 在范围内但视线被挡：累计阻塞 tick，超时后按"已到达"兜底（靠后续对准 / giveUpAiming 收尾）。
+        double dist = BlockAimHelper.distanceToAimPoint(player, signPos);
+        if (dist <= reach) {
+            if (!sightMsgSent) {
+                sightMsgSent = true;
+                notifySightBlocked(client);
+            }
+            if (++blockedTicks >= config.getSightBlockedTimeoutTicks()) {
+                arrived = true;
+                LOGGER.warn("Sight to QShop sign {} blocked for {} ticks, proceeding to aim (may skip).",
+                        signPos, blockedTicks);
+                return true;
+            }
+        } else {
+            // 仍在赶路（超距）：重置计数，避免把"绕路途中经过牌子附近"算作阻塞。
+            blockedTicks = 0;
+            sightMsgSent = false;
+        }
+        return false;
+    }
+
+    /** 视线被挡时提示玩家，等待超时。 */
+    private void notifySightBlocked(MinecraftClient client) {
+        if (client.player != null) {
+            client.player.sendMessage(
+                    Text.translatable("qab.msg.buy_sight_blocked", formatPos(signPos))
+                            .formatted(Formatting.YELLOW), false);
+        }
+    }
+
+    private static String formatPos(BlockPos pos) {
+        return pos.getX() + "," + pos.getY() + "," + pos.getZ();
     }
 
     // ==================== 到店后的购买时序 ====================
