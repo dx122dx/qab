@@ -10,6 +10,11 @@ import com.billy65536.qab.integration.CsNavigationHelper;
 import com.billy65536.qab.integration.CsQShopDbLoader;
 import com.billy65536.qab.planner.ShoppingPlanner;
 import com.billy65536.qab.planner.model.ShopExportData;
+import com.billy65536.qab.planner.region.Region;
+import com.billy65536.qab.planner.region.RegionHighlightRenderer;
+import com.billy65536.qab.planner.region.RegionManager;
+import com.billy65536.qab.planner.region.RegionSelector;
+import com.billy65536.qab.planner.region.RegionTable;
 import com.billy65536.qab.planner.model.ShoppingList;
 import com.billy65536.qab.planner.model.ShoppingPlan;
 import com.google.gson.Gson;
@@ -211,11 +216,41 @@ public class QabCommands {
                                                     StringArgumentType.getString(ctx, "file"),
                                                     StringArgumentType.getString(ctx, "config"))))));
 
+            // /qab region open|create|visible|save|selector|remove|list —— 区域选择 + TSP 分组
+            var region = literal("region")
+                    .then(literal("open")
+                            .then(argument("name", StringArgumentType.string())
+                                    .executes(QabCommands::execRegionOpen)))
+                    .then(literal("create")
+                            .then(argument("name", StringArgumentType.string())
+                                    .executes(QabCommands::execRegionCreate)
+                                    .then(argument("x1", IntegerArgumentType.integer())
+                                            .then(argument("y1", IntegerArgumentType.integer())
+                                                    .then(argument("z1", IntegerArgumentType.integer())
+                                                            .then(argument("x2", IntegerArgumentType.integer())
+                                                                    .then(argument("y2", IntegerArgumentType.integer())
+                                                                            .then(argument("z2", IntegerArgumentType.integer())
+                                                                                    .executes(QabCommands::execRegionCreateCoords)))))))))
+                    .then(literal("visible")
+                            .executes(ctx -> execRegionVisible(ctx, null))
+                            .then(literal("on").executes(ctx -> execRegionVisible(ctx, true)))
+                            .then(literal("off").executes(ctx -> execRegionVisible(ctx, false))))
+                    .then(literal("save").executes(QabCommands::execRegionSave))
+                    .then(literal("selector")
+                            .executes(ctx -> execRegionSelector(ctx, null))
+                            .then(literal("on").executes(ctx -> execRegionSelector(ctx, true)))
+                            .then(literal("off").executes(ctx -> execRegionSelector(ctx, false))))
+                    .then(literal("remove")
+                            .then(argument("name", StringArgumentType.string())
+                                    .executes(QabCommands::execRegionRemove)))
+                    .then(literal("list").executes(QabCommands::execRegionList));
+
             root.then(select);
             root.then(plan);
             root.then(nav);
             root.then(stash);
             root.then(generate);
+            root.then(region);
 
             dispatcher.register(root);
             LOGGER.info("Registered /qab commands");
@@ -328,8 +363,8 @@ public class QabCommands {
                 return 0;
             }
 
-            // TODO 实现选区功能
-            ShoppingPlan plan = ShoppingPlanner.generatePlan(list, export, null);
+            // 按当前区域表做分组 + TSP 排序（未打开区域表时自动创建空表，等价于不做分组）
+            ShoppingPlan plan = ShoppingPlanner.generatePlan(list, export, RegionManager.getCurrentTable());
 
             Path outPath = QAB_PLAN_DIR.resolve(planName);
             String json = new GsonBuilder().setPrettyPrinting().create().toJson(plan);
@@ -632,6 +667,120 @@ public class QabCommands {
         }
         ctx.getSource().sendFeedback(Text.translatable("qab.msg.stash_remove_done",
                 removed, config.getStashPositions().size()).formatted(Formatting.YELLOW));
+        return 1;
+    }
+
+    // ---- region open: 打开（或新建）指定名称的区域表 ----
+    private static int execRegionOpen(CommandContext<FabricClientCommandSource> ctx) {
+        String name = StringArgumentType.getString(ctx, "name");
+        boolean loaded = RegionManager.open(name);
+        if (loaded) {
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.region_opened",
+                    name, RegionManager.getCurrentTable().size()).formatted(Formatting.GREEN));
+        } else {
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.region_created_new",
+                    name).formatted(Formatting.YELLOW));
+        }
+        return 1;
+    }
+
+    // ---- region create <name>: 设置待填充区域名并开启选择器（左/右键记录两角） ----
+    private static int execRegionCreate(CommandContext<FabricClientCommandSource> ctx) {
+        String name = StringArgumentType.getString(ctx, "name");
+        RegionManager.getCurrentTable(); // 确保已有表（未打开则自动创建）
+        RegionSelector.beginRegion(name);
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.region_create_begin",
+                name).formatted(Formatting.GREEN));
+        return 1;
+    }
+
+    // ---- region create <name> <x1> <y1> <z1> <x2> <y2> <z2>: 直接用坐标创建区域 ----
+    private static int execRegionCreateCoords(CommandContext<FabricClientCommandSource> ctx) {
+        String name = StringArgumentType.getString(ctx, "name");
+        var player = ctx.getSource().getPlayer();
+        var world = ctx.getSource().getWorld();
+        if (player == null || world == null) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.stash_no_player"));
+            return 0;
+        }
+        int x1 = IntegerArgumentType.getInteger(ctx, "x1");
+        int y1 = IntegerArgumentType.getInteger(ctx, "y1");
+        int z1 = IntegerArgumentType.getInteger(ctx, "z1");
+        int x2 = IntegerArgumentType.getInteger(ctx, "x2");
+        int y2 = IntegerArgumentType.getInteger(ctx, "y2");
+        int z2 = IntegerArgumentType.getInteger(ctx, "z2");
+        String dim = world.getRegistryKey().getValue().toString();
+
+        Region region = Region.of(x1, y1, z1, x2, y2, z2, dim);
+        RegionManager.addRegion(name, region);
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.region_created",
+                name, x1, y1, z1, x2, y2, z2, dim).formatted(Formatting.GREEN));
+        return 1;
+    }
+
+    // ---- region visible [on|off]: 切换区域高亮渲染 ----
+    private static int execRegionVisible(CommandContext<FabricClientCommandSource> ctx, Boolean on) {
+        QabConfig config = QabConfig.load();
+        boolean next = (on == null) ? !config.isRegionVisible() : on;
+        config.setRegionVisible(next);
+        config.save();
+        RegionHighlightRenderer.setVisible(next);
+        ctx.getSource().sendFeedback(Text.translatable(
+                next ? "qab.msg.region_visible_on" : "qab.msg.region_visible_off")
+                .formatted(next ? Formatting.GREEN : Formatting.YELLOW));
+        return 1;
+    }
+
+    // ---- region save: 持久化当前区域表 ----
+    private static int execRegionSave(CommandContext<FabricClientCommandSource> ctx) {
+        if (RegionManager.save()) {
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.region_saved",
+                    RegionManager.getCurrentTableName()).formatted(Formatting.GREEN));
+        } else {
+            ctx.getSource().sendError(Text.translatable("qab.msg.region_save_failed"));
+        }
+        return 1;
+    }
+
+    // ---- region selector [on|off]: 切换区域选择器 ----
+    private static int execRegionSelector(CommandContext<FabricClientCommandSource> ctx, Boolean on) {
+        boolean next = (on == null) ? !RegionSelector.isEnabled() : on;
+        RegionSelector.setEnabled(next);
+        ctx.getSource().sendFeedback(Text.translatable(
+                next ? "qab.msg.region_selector_on" : "qab.msg.region_selector_off")
+                .formatted(next ? Formatting.GREEN : Formatting.YELLOW));
+        return 1;
+    }
+
+    // ---- region remove <name>: 删除命名区域 ----
+    private static int execRegionRemove(CommandContext<FabricClientCommandSource> ctx) {
+        String name = StringArgumentType.getString(ctx, "name");
+        if (RegionManager.removeRegion(name)) {
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.region_removed",
+                    name).formatted(Formatting.YELLOW));
+        } else {
+            ctx.getSource().sendError(Text.translatable("qab.msg.region_not_found", name));
+        }
+        return 1;
+    }
+
+    // ---- region list: 列出当前区域表的所有区域 ----
+    private static int execRegionList(CommandContext<FabricClientCommandSource> ctx) {
+        RegionTable table = RegionManager.getCurrentTable();
+        if (table.isEmpty()) {
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.region_list_empty",
+                    RegionManager.getCurrentTableName()).formatted(Formatting.GRAY));
+            return 1;
+        }
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.region_list_header",
+                RegionManager.getCurrentTableName(), table.size()).formatted(Formatting.AQUA));
+        for (String name : table.names()) {
+            Region r = table.get(name);
+            if (r == null) continue;
+            ctx.getSource().sendFeedback(Text.literal("  " + name + ": " + r.dimension()
+                    + "(" + r.minX() + "," + r.minY() + "," + r.minZ() + ")..("
+                    + r.maxX() + "," + r.maxY() + "," + r.maxZ() + ")").formatted(Formatting.GRAY));
+        }
         return 1;
     }
 

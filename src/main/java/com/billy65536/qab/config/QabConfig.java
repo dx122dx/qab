@@ -76,6 +76,11 @@ public final class QabConfig {
     private static final int DEFAULT_STASH_TRANSFER_DELAY_TICKS = 2;
     private static final int DEFAULT_STASH_RESERVE_SLOTS = 1;
 
+    /** 是否启用区域选择器（左/右键记录坐标，由命令 /qab region selector 切换）。 */
+    private static final boolean DEFAULT_REGION_SELECTOR_MODE = false;
+    /** 是否渲染区域高亮边框（由命令 /qab region visible 切换）。 */
+    private static final boolean DEFAULT_REGION_VISIBLE = true;
+
     /** 搬运间隔上限，避免用户填个巨大值让存货永远跑不完。 */
     private static final int MAX_STASH_TRANSFER_DELAY_TICKS = 100;
     /** 预留格子数上限：主背包共 27 格，留满就没法买东西了。 */
@@ -104,6 +109,11 @@ public final class QabConfig {
     private int stashTransferDelayTicks = DEFAULT_STASH_TRANSFER_DELAY_TICKS;
     /** 容量预判时额外预留的空格数。 */
     private int stashReserveSlots = DEFAULT_STASH_RESERVE_SLOTS;
+
+    /** 是否启用区域选择器（左/右键记录坐标）。 */
+    private boolean regionSelectorMode = DEFAULT_REGION_SELECTOR_MODE;
+    /** 是否渲染区域高亮边框。 */
+    private boolean regionVisible = DEFAULT_REGION_VISIBLE;
 
     private QabConfig() {
     }
@@ -252,6 +262,26 @@ public final class QabConfig {
 
     public int getStashReserveSlots() {
         return stashReserveSlots;
+    }
+
+    /** 是否启用区域选择器（左/右键记录坐标）。 */
+    public boolean isRegionSelectorMode() {
+        return regionSelectorMode;
+    }
+
+    /** 设置并持久化区域选择器开关。 */
+    public void setRegionSelectorMode(boolean regionSelectorMode) {
+        this.regionSelectorMode = regionSelectorMode;
+    }
+
+    /** 是否渲染区域高亮边框。 */
+    public boolean isRegionVisible() {
+        return regionVisible;
+    }
+
+    /** 设置区域高亮开关（渲染器会读取此值）。 */
+    public void setRegionVisible(boolean regionVisible) {
+        this.regionVisible = regionVisible;
     }
 
     /**

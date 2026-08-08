@@ -7,6 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.billy65536.qab.automatic.ShoppingRunner;
+import com.billy65536.qab.planner.region.RegionHighlightRenderer;
+import com.billy65536.qab.planner.region.RegionSelector;
 
 public class QShopAutoBuyMod implements ClientModInitializer {
     public static final String MOD_ID = "qshop-auto-buy";
@@ -16,9 +18,13 @@ public class QShopAutoBuyMod implements ClientModInitializer {
     public void onInitializeClient() {
         LOGGER.info("QShopAutoBuy mod initializing...");
 
-        // 注册命令：/qab select db|list、/qab plan、/qab nav、/qab stash
+        // 注册命令：/qab select db|list、/qab plan、/qab nav、/qab stash、/qab region
         QabCommands.register();
         LOGGER.info("Commands registered. Use /qab select db/list, then /qab plan.");
+
+        // 区域选择器与高亮渲染
+        RegionSelector.register();
+        RegionHighlightRenderer.initialize();
 
         // 驱动购买编排器。导航实例本身由 chunkscanner 托管 tick，
         // 但「部分购买回插队列 / 触发存货」这层编排是 QAB 自己的状态机，需自行驱动。

@@ -61,5 +61,22 @@
     "qab.msg.stash_list_empty": "尚未配置任何存货点。请站在箱子前用 /qab stash add 添加。",
     "qab.msg.stash_list_header": "已配置 %d 个存货点（按顺序使用，装满则顺延）：",
     "qab.msg.stash_remove_bad_index": "序号 %d 无效，当前共 %d 个存货点。",
-    "qab.msg.stash_remove_done": "已移除存货点 %s（剩余 %d 个）。"
+    "qab.msg.stash_remove_done": "已移除存货点 %s（剩余 %d 个）。",
+    "qab.msg.region_opened": "已打开区域表“%s”（共 %d 个区域）。",
+    "qab.msg.region_created_new": "未找到区域表“%s”，已新建空表。",
+    "qab.msg.region_create_begin": "开始创建区域“%s”。左键点击方块记第一角，右键记第二角（自动开启选择器）。",
+    "qab.msg.region_created": "已创建区域“%s”：从 (%d,%d,%d) 到 (%d,%d,%d)，维度 %s。",
+    "qab.msg.region_visible_on": "已开启区域高亮渲染。",
+    "qab.msg.region_visible_off": "已关闭区域高亮渲染。",
+    "qab.msg.region_saved": "区域表“%s”已保存。",
+    "qab.msg.region_save_failed": "区域表保存失败。",
+    "qab.msg.region_selector_on": "区域选择器已开启：左键=第一角，右键=第二角。",
+    "qab.msg.region_selector_off": "区域选择器已关闭。",
+    "qab.msg.region_removed": "已移除区域“%s”。",
+    "qab.msg.region_not_found": "当前区域表中找不到“%s”。",
+    "qab.msg.region_list_empty": "区域表“%s”没有任何区域。请用 /qab region create <name> 创建。",
+    "qab.msg.region_list_header": "区域表“%s”（共 %d 个区域）：",
+    "qab.msg.region_no_target": "请先把准星对准一个方块。",
+    "qab.msg.region_no_corner": "请先用左键点击方块设置第一角。",
+    "qab.msg.region_corner_set": "区域“%s”第一角已设在 %s(%d,%d,%d)，右键完成创建。"
 }

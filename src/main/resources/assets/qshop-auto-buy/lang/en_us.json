@@ -60,5 +60,22 @@
     "qab.msg.stash_list_empty": "No stash points configured. Look at a chest and run /qab stash add.",
     "qab.msg.stash_list_header": "%d stash point(s) configured (used in order, falling through when full):",
     "qab.msg.stash_remove_bad_index": "Index %d is invalid; there are %d stash point(s).",
-    "qab.msg.stash_remove_done": "Removed stash point %s (%d remaining)."
+    "qab.msg.stash_remove_done": "Removed stash point %s (%d remaining).",
+    "qab.msg.region_opened": "Opened region table '%s' (%d region(s)).",
+    "qab.msg.region_created_new": "Region table '%s' not found, created a new empty table.",
+    "qab.msg.region_create_begin": "Started region '%s'. Left-click a block for the first corner, right-click for the second (auto-enables selector).",
+    "qab.msg.region_created": "Created region '%s' from (%d,%d,%d) to (%d,%d,%d) in %s.",
+    "qab.msg.region_visible_on": "Region highlight rendering enabled.",
+    "qab.msg.region_visible_off": "Region highlight rendering disabled.",
+    "qab.msg.region_saved": "Region table '%s' saved.",
+    "qab.msg.region_save_failed": "Failed to save region table.",
+    "qab.msg.region_selector_on": "Region selector enabled: left-click = first corner, right-click = second corner.",
+    "qab.msg.region_selector_off": "Region selector disabled.",
+    "qab.msg.region_removed": "Removed region '%s'.",
+    "qab.msg.region_not_found": "Region '%s' not found in the current table.",
+    "qab.msg.region_list_empty": "Region table '%s' has no regions. Use /qab region create <name>.",
+    "qab.msg.region_list_header": "Region table '%s' (%d region(s)):",
+    "qab.msg.region_no_target": "Look at a block first (crosshair must point at a block).",
+    "qab.msg.region_no_corner": "Left-click a block first to set the first corner.",
+    "qab.msg.region_corner_set": "Region '%s' first corner set at %s(%d,%d,%d). Right-click to finish."
 }

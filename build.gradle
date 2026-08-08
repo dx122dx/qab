@@ -75,6 +75,11 @@ dependencies {
         changing = true
     }
 
+    // Infrastructure — 复用通用渲染器（BoxRenderer / Box），同样从 SNAPSHOT 拉取
+    modImplementation("${project.infrastructure_group}:${project.infrastructure_artifact}:${project.infrastructure_default_version}") {
+        changing = true
+    }
+
     // schematic4j — 解析 .litematic / .schem / .schematic 原理图，用于生成购物清单
     // 普通 Java 库（非 mod），需 include 打进最终 jar
     implementation "net.sandrohc:schematic4j:${project.schematic4j_version}"
@@ -87,7 +92,8 @@ processResources {
 
 	filesMatching("fabric.mod.json") {
 		expand "version": version,
-		       "chunkscanner_version": project.chunkscanner_default_version
+		       "chunkscanner_version": project.chunkscanner_default_version,
+		       "infrastructure_version": project.infrastructure_default_version
 	}
 }
 

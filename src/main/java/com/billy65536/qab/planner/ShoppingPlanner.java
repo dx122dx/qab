@@ -7,7 +7,7 @@ import com.billy65536.qab.integration.CsNavigationHelper;
 import com.billy65536.qab.integration.CsNavigationHelper.ParsedPos;
 import com.billy65536.qab.planner.model.*;
 import com.billy65536.qab.planner.region.Region;
-import com.billy65536.qab.planner.region.RegionDefinition;
+import com.billy65536.qab.planner.region.RegionTable;
 
 /**
  * 核心购物规划器，根据购物清单和导出的QShop数据生成最优购买计划。
@@ -26,11 +26,11 @@ public class ShoppingPlanner {
      *
      * @param list 购物清单
      * @param export 导出的QShop数据
-     * @param regionDef 区域定义，用于将坐标归入不同区域并获取区域中心点
+     * @param regionTable 区域表，用于将坐标归入不同区域并获取区域中心点
      * @return 生成的购物计划
      */
     public static ShoppingPlan generatePlan(ShoppingList list, ShopExportData export,
-                                            RegionDefinition regionDef) {
+                                            RegionTable regionTable) {
         ShoppingPlan plan = new ShoppingPlan();
         int redundancy = Math.max(0, list.getRedundancy());
 
@@ -47,8 +47,8 @@ public class ShoppingPlanner {
         // 将总成本四舍五入到小数点后两位。
         plan.setTotalCost(Math.round(plan.getTotalCost() * 100.0) / 100.0);
 
-        if (regionDef != null && plan.getPlan() != null && !plan.getPlan().isEmpty()) {
-            plan.setPlan(optimizePlanOrder(plan.getPlan(), regionDef));
+        if (regionTable != null && plan.getPlan() != null && !plan.getPlan().isEmpty()) {
+            plan.setPlan(optimizePlanOrder(plan.getPlan(), regionTable));
         }
 
         return plan;
@@ -207,9 +207,9 @@ public class ShoppingPlanner {
      * @return 重新排序后的计划条目列表
      */
     private static List<PlanEntry> optimizePlanOrder(List<PlanEntry> entries,
-                                                     RegionDefinition regionDef) {
+                                                     RegionTable regionTable) {
         // 1. 预解析每个条目的坐标并按区域分组；
-        //    解析失败或未命中任何普通区域的条目归入 unassigned，保持原序最后追加
+        //    解析失败或未命中任何命名区域的条目归入 unassigned，保持原序最后追加
         Map<Region, List<PlanEntry>> regionToEntries = new LinkedHashMap<>();
         Map<PlanEntry, ParsedPos> parsed = new HashMap<>();
         List<PlanEntry> unassignedEntries = new ArrayList<>();
@@ -217,8 +217,8 @@ public class ShoppingPlanner {
         for (PlanEntry entry : entries) {
             ParsedPos pos = CsNavigationHelper.parsePosition(entry.getPosition());
             parsed.put(entry, pos);
-            Region region = regionDef.regionOf(pos);
-            if (regionDef.isAssignedRegion(region)) {
+            Region region = regionTable.regionOf(pos);
+            if (regionTable.isAssignedRegion(region)) {
                 regionToEntries.computeIfAbsent(region, k -> new ArrayList<>()).add(entry);
             } else {
                 unassignedEntries.add(entry);
