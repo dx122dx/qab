@@ -6,23 +6,38 @@ plugins {
 version = project.mod_version
 group = project.maven_group
 
+base {
+    archivesName = project.archives_base_name
+}
+
+// CI（GitHub Actions）环境可直连 Mojang，自动跳过 BMCLAPI 镜像，
+// 避免镜像 SHA1 漂移导致 CI 构建失败；仅本地无法直连时使用镜像。
+def useBmclapi = System.getenv("CI") == null
+
 // Fabric Loom 镜像配置（为无法直连 Mojang 服务器的环境使用 BMCLAPI 镜像）
-ext {
-    loom_version_manifests = 'https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json'
-    loom_libraries_base = 'https://bmclapi2.bangbang93.com/libraries/'
-    loom_resources_base = 'https://bmclapi2.bangbang93.com/assets/'
+if (useBmclapi) {
+    ext {
+        loom_version_manifests = 'https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json'
+        loom_libraries_base = 'https://bmclapi2.bangbang93.com/libraries/'
+        loom_resources_base = 'https://bmclapi2.bangbang93.com/assets/'
+    }
 }
 
 loom {
     // 使用 BMCLAPI 直接下载版本 JSON，绕过 version manifest
-    customMinecraftManifest = 'https://bmclapi2.bangbang93.com/v1/packages/a540b5c5ded34de717f3acc10c9d3704b66670d8/1.20.1.json'
+    // 注意：SHA1 前缀可能随 BMCLAPI 更新而变化，若构建失败请检查此 URL
+    if (useBmclapi) {
+        customMinecraftManifest = 'https://bmclapi2.bangbang93.com/v1/packages/a540b5c5ded34de717f3acc10c9d3704b66670d8/1.20.1.json'
+    }
 }
 
 repositories {
     mavenLocal()
-    maven {
-        name = 'BMCLAPI Minecraft Libraries'
-        url = 'https://bmclapi2.bangbang93.com/libraries/'
+    if (useBmclapi) {
+        maven {
+            name = 'BMCLAPI Minecraft Libraries'
+            url = 'https://bmclapi2.bangbang93.com/libraries/'
+        }
     }
     maven {
         name = 'Fabric'
@@ -82,8 +97,22 @@ tasks.withType(JavaCompile).configureEach {
 
 java {
     withSourcesJar()
+    withJavadocJar()
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
+}
+
+// Maven Central 快照发布要求禁用 Gradle Module Metadata，
+// 避免 .module 文件泄漏对 SNAPSHOT 依赖（chunkscanner）的坐标。
+tasks.withType(GenerateModuleMetadata).configureEach {
+    enabled = false
+}
+
+// javadoc 对源码注释较严格（已有注释存在格式/链接问题），
+// 关闭 doclint 仅生成告警，避免阻塞 build / 发布。
+tasks.withType(Javadoc).configureEach {
+    options.encoding = 'UTF-8'
+    (options as StandardJavadocDocletOptions).addBooleanOption('Xdoclint:none', true)
 }
 
 jar {
@@ -95,10 +124,52 @@ jar {
     }
 }
 
+// maven-publish 配置：坐标与快照仓库全部由外部属性/环境变量驱动，
+// 属性缺省时回落到现有 group/version，本地 ./gradlew build 行为完全不变。
 publishing {
     publications {
-        create("mavenJava", MavenPublication) {
+        mavenJava(MavenPublication) {
             from components.java
+            // 发布坐标覆盖契约：CI 传 -PpublishGroup / -PpublishVersion，缺省回落到现有值
+            groupId    = findProperty('publishGroup')   ?: project.group
+            artifactId = project.archives_base_name
+            version    = findProperty('publishVersion') ?: project.version
+
+            pom {
+                name        = 'QShop Auto Buy'
+                description = 'Client-side QShop automatic buying helper for Fabric. Parses schematics into shopping lists, plans purchases against QShop store data and auto-navigates to each shop. NOTE: this mod requires the "chunkscanner" mod (io.github.dx122dx.mc:chunkscanner) at runtime, published to Maven Central.'
+                url         = 'https://github.com/dx122dx/qab'
+                licenses {
+                    license {
+                        name = 'GNU Affero General Public License v3.0 only'
+                        url  = 'https://www.gnu.org/licenses/agpl-3.0.txt'
+                    }
+                }
+                developers {
+                    developer {
+                        id   = 'billy65536'
+                        name = 'billy65536'
+                    }
+                }
+                scm {
+                    connection          = 'scm:git:git://github.com/dx122dx/qab.git'
+                    developerConnection = 'scm:git:ssh://github.com/dx122dx/qab.git'
+                    url                 = 'https://github.com/dx122dx/qab'
+                }
+
+                // 依赖均可从公共 Maven 解析（chunkscanner 已发布到中央 SNAPSHOT），无需剔除本地坐标。
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            name = 'centralSnapshots'
+            url  = 'https://central.sonatype.com/repository/maven-snapshots/'
+            credentials {
+                username = System.getenv('CENTRAL_TOKEN_USERNAME')
+                password = System.getenv('CENTRAL_TOKEN_PASSWORD')
+            }
         }
     }
 }
