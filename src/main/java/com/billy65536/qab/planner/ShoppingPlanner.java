@@ -3,18 +3,22 @@ package com.billy65536.qab.planner;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import com.billy65536.qab.integration.CsNavigationHelper;
+import com.billy65536.qab.integration.CsNavigationHelper.ParsedPos;
 import com.billy65536.qab.planner.model.*;
+import com.billy65536.qab.planner.region.Region;
+import com.billy65536.qab.planner.region.RegionDefinition;
 
 /**
-* 核心购物规划器，根据购物清单和导出的QShop数据生成最优购买计划。
-* <p>算法：
-* <ol>
-*   <li>对于购物清单中的每件商品，查找所有匹配的商店</li>
-*   <li>按单价对匹配的商店进行排序（升序，最便宜的在前）</li>
-*   <li>从最便宜的商店贪心分配所需数量 + 冗余量</li>
-*   <li>分配分为 "count"（必需）和 "redundancy"（安全库存）</li>
-* </ol>
-*/
+ * 核心购物规划器，根据购物清单和导出的QShop数据生成最优购买计划。
+ * <p>算法：
+ * <ol>
+ *   <li>对于购物清单中的每件商品，查找所有匹配的商店</li>
+ *   <li>按单价对匹配的商店进行排序（升序，最便宜的在前）</li>
+ *   <li>从最便宜的商店贪心分配所需数量 + 冗余量</li>
+ *   <li>分配分为 "count"（必需）和 "redundancy"（安全库存）</li>
+ * </ol>
+ */
 public class ShoppingPlanner {
 
     /**
@@ -22,9 +26,11 @@ public class ShoppingPlanner {
      *
      * @param list 购物清单
      * @param export 导出的QShop数据
+     * @param regionDef 区域定义，用于将坐标归入不同区域并获取区域中心点
      * @return 生成的购物计划
      */
-    public static ShoppingPlan generatePlan(ShoppingList list, ShopExportData export) {
+    public static ShoppingPlan generatePlan(ShoppingList list, ShopExportData export,
+                                            RegionDefinition regionDef) {
         ShoppingPlan plan = new ShoppingPlan();
         int redundancy = Math.max(0, list.getRedundancy());
 
@@ -32,7 +38,6 @@ public class ShoppingPlanner {
             return plan;
         }
 
-        // 构建查找：itemId -> 销售模式商店条目列表
         Map<String, List<ShopExportEntry>> shopsByItem = buildShopIndex(export);
 
         for (ShoppingItem item : list.getItems()) {
@@ -42,8 +47,14 @@ public class ShoppingPlanner {
         // 将总成本四舍五入到小数点后两位。
         plan.setTotalCost(Math.round(plan.getTotalCost() * 100.0) / 100.0);
 
+        if (regionDef != null && plan.getPlan() != null && !plan.getPlan().isEmpty()) {
+            plan.setPlan(optimizePlanOrder(plan.getPlan(), regionDef));
+        }
+
         return plan;
     }
+
+    // ====================== 初始化 =======================
 
     /**
      * 构建从物品ID到售卖模式商店条目列表的索引。
@@ -59,6 +70,8 @@ public class ShoppingPlanner {
         }
         return index;
     }
+
+    // ====================== 初次规划 =======================
 
     /**
      * 处理单个购物清单项目：查找匹配的商店，分配购买。
@@ -182,5 +195,160 @@ public class ShoppingPlanner {
         clone.setMatchNbt(original.getMatchNbt());
         clone.setMaxAffordable(original.getMaxAffordable());
         return clone;
+    }
+
+    // ====================== 二次规划 =======================
+
+    /**
+     * 对计划条目列表进行区域分组 + 双层 TSP 近似排序。
+     *
+     * @param entries   原始计划条目列表
+     * @param regionDef 区域定义
+     * @return 重新排序后的计划条目列表
+     */
+    private static List<PlanEntry> optimizePlanOrder(List<PlanEntry> entries,
+                                                     RegionDefinition regionDef) {
+        // 1. 预解析每个条目的坐标并按区域分组；
+        //    解析失败或未命中任何普通区域的条目归入 unassigned，保持原序最后追加
+        Map<Region, List<PlanEntry>> regionToEntries = new LinkedHashMap<>();
+        Map<PlanEntry, ParsedPos> parsed = new HashMap<>();
+        List<PlanEntry> unassignedEntries = new ArrayList<>();
+
+        for (PlanEntry entry : entries) {
+            ParsedPos pos = CsNavigationHelper.parsePosition(entry.getPosition());
+            parsed.put(entry, pos);
+            Region region = regionDef.regionOf(pos);
+            if (regionDef.isAssignedRegion(region)) {
+                regionToEntries.computeIfAbsent(region, k -> new ArrayList<>()).add(entry);
+            } else {
+                unassignedEntries.add(entry);
+            }
+        }
+
+        // 2. 每个区域内，对条目按其坐标进行 TSP 近似排序
+        for (Map.Entry<Region, List<PlanEntry>> entry : regionToEntries.entrySet()) {
+            entry.setValue(tspSortByCoordinate(entry.getValue(), parsed));
+        }
+
+        // 3. 收集所有区域，以区域中心点为代表进行 TSP 排序，确定区域访问顺序
+        List<Region> regions = new ArrayList<>(regionToEntries.keySet());
+        if (regions.size() > 2) {
+            regions = tspSortRegions(regions);
+        }
+
+        // 4. 拼接：区域按序在前，未分配条目保持原序追加在后
+        List<PlanEntry> sortedPlan = new ArrayList<>();
+        for (Region region : regions) {
+            sortedPlan.addAll(regionToEntries.get(region));
+        }
+        sortedPlan.addAll(unassignedEntries);
+        return sortedPlan;
+    }
+
+    /**
+     * 对同一区域内的条目按坐标进行 TSP 近似排序（最近邻启发式）。
+     * 起点选择坐标最小的点（先比 x 再比 z）。
+     *
+     * @param entries 区域内的条目（调用方保证其坐标已成功解析）
+     * @param parsed  条目 -> 已解析坐标的映射
+     */
+    private static List<PlanEntry> tspSortByCoordinate(List<PlanEntry> entries,
+                                                       Map<PlanEntry, ParsedPos> parsed) {
+        int n = entries.size();
+        if (n <= 2) return new ArrayList<>(entries);
+
+        // 提取 XZ 坐标（MC 寻路以水平面为主，忽略高度）
+        int[][] coords = new int[n][2];
+        for (int i = 0; i < n; i++) {
+            ParsedPos pos = parsed.get(entries.get(i));
+            coords[i][0] = pos.x;
+            coords[i][1] = pos.z;
+        }
+
+        // 找到起始点（最小 x，x 相同则最小 z）
+        int start = 0;
+        for (int i = 1; i < n; i++) {
+            if (coords[i][0] < coords[start][0] ||
+                (coords[i][0] == coords[start][0] && coords[i][1] < coords[start][1])) {
+                start = i;
+            }
+        }
+
+        boolean[] visited = new boolean[n];
+        List<PlanEntry> result = new ArrayList<>(n);
+        int current = start;
+
+        for (int i = 0; i < n; i++) {
+            visited[current] = true;
+            result.add(entries.get(current));
+
+            // 寻找距离当前点最近的未访问点
+            int next = -1;
+            long minDist = Long.MAX_VALUE;
+            for (int j = 0; j < n; j++) {
+                if (!visited[j]) {
+                    long dx = (long) coords[j][0] - coords[current][0];
+                    long dz = (long) coords[j][1] - coords[current][1];
+                    long dist = dx * dx + dz * dz;
+                    if (dist < minDist) {
+                        minDist = dist;
+                        next = j;
+                    }
+                }
+            }
+            if (next == -1) break;
+            current = next;
+        }
+        return result;
+    }
+
+    /**
+     * 对区域列表按区域中心点进行 TSP 近似排序（最近邻启发式）。
+     * 起点选择中心坐标最小的区域（先比 x 再比 z）。
+     */
+    private static List<Region> tspSortRegions(List<Region> regions) {
+        int n = regions.size();
+        if (n <= 2) return new ArrayList<>(regions);
+
+        double[][] centers = new double[n][2];
+        for (int i = 0; i < n; i++) {
+            centers[i][0] = regions.get(i).getCenterX();
+            centers[i][1] = regions.get(i).getCenterZ();
+        }
+
+        // 找起始区域
+        int start = 0;
+        for (int i = 1; i < n; i++) {
+            if (centers[i][0] < centers[start][0] ||
+                (centers[i][0] == centers[start][0] && centers[i][1] < centers[start][1])) {
+                start = i;
+            }
+        }
+
+        boolean[] visited = new boolean[n];
+        List<Region> result = new ArrayList<>(n);
+        int current = start;
+
+        for (int i = 0; i < n; i++) {
+            visited[current] = true;
+            result.add(regions.get(current));
+
+            int next = -1;
+            double minDist = Double.MAX_VALUE;
+            for (int j = 0; j < n; j++) {
+                if (!visited[j]) {
+                    double dx = centers[j][0] - centers[current][0];
+                    double dz = centers[j][1] - centers[current][1];
+                    double dist = dx * dx + dz * dz;
+                    if (dist < minDist) {
+                        minDist = dist;
+                        next = j;
+                    }
+                }
+            }
+            if (next == -1) break;
+            current = next;
+        }
+        return result;
     }
 }

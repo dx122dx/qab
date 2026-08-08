@@ -328,7 +328,8 @@ public class QabCommands {
                 return 0;
             }
 
-            ShoppingPlan plan = ShoppingPlanner.generatePlan(list, export);
+            // TODO 实现选区功能
+            ShoppingPlan plan = ShoppingPlanner.generatePlan(list, export, null);
 
             Path outPath = QAB_PLAN_DIR.resolve(planName);
             String json = new GsonBuilder().setPrettyPrinting().create().toJson(plan);
