@@ -23,19 +23,23 @@ import java.nio.file.Path;
  *   <li>构造时 {@link DatabaseApi#openImage(Path)} 解析 ZIP 内的 metadata.json（不校验、不解压）；</li>
  *   <li>调用 {@link #validate()} 校验 metadata 字段合法性与文件 SHA-256 完整性；</li>
  *   <li>调用 {@link #load()}：解压并还原 {@link DbPackage} 实例；</li>
- *   <li>通过 {@link QShopDbAdapter} 读取全部 QShop 记录（自动合并子库增强数据）；</li>
+ *   <li>经 {@link DbPackage#getAdaptor(Class)} 取得 {@link QShopDbAdapter}，
+ *       读取全部 QShop 记录（自动合并子库增强数据）；</li>
  *   <li>逐条映射为 {@link ShopExportEntry} 并聚合到 {@link ShopExportData}。</li>
  * </ol>
  *
  * <h3>设计原则</h3>
  * 包的打开、校验与加载统一走 chunkscanner 公共 API（{@link DatabaseApi}），
  * 完全不依赖 {@code BinaryChunkDb} 等具体实现类：导出包通过 metadata.json 的
- * {@code databaseType} 字段自动路由到对应的数据库工厂。
+ * {@code databaseType} 字段自动路由到对应的数据库工厂，
+ * 包内数据则通过 {@code adaptorId} 字段路由到对应的适配器。
  *
  * <p><b>已知的非公共依赖</b>：{@link QShopDbAdapter} 位于 chunkscanner 的
  * {@code components} 包，不属于其公共 API 契约，可能随版本调整。
  * 它是 QShop 数据的专用解码器，目前公共 API 未提供等价能力，
- * 故暂时保留直接依赖；升级 chunkscanner 时需重点回归此处。</p>
+ * 故暂时保留直接依赖；升级 chunkscanner 时需重点回归此处。
+ * 但适配器的<b>取用方式</b>已收敛到公共契约 {@code pkg.getAdaptor(Class)}，
+ * 不再自行 new 实例，包与适配器的绑定关系由 chunkscanner 负责。</p>
  *
  * @see DatabaseApi
  * @see QShopDbAdapter
@@ -86,6 +90,9 @@ public class CsQShopDbLoader {
  *   <li>{@link DbImage#load(Path, boolean) image.load(tmpDir, false)}：
  *       解压 ZIP 并通过 FactoryRegistry 还原 {@link DbPackage}（{@code false} 跳过校验，
  *       因调用方通常已先执行 {@link #validate()}）；</li>
+     *   <li>{@code pkg.getAdaptor(QShopDbAdapter.class)} 取得适配器 —— 若包声明的适配器不是
+     *       QShop（例如误传了别的分析器导出的 ZIP），此处抛 {@code IllegalStateException}，
+     *       会被统一包装为 {@link IOException}；</li>
      *   <li>通过 {@link QShopDbAdapter#getAllRecords()} 读取全部 QShop 记录，<b>已自动合并子库
      *       （id=1）增强数据</b>：包括聊天捕获的物品注册 ID（覆盖 itemId）、flags 合并、
      *       detailNbtString 等；</li>
@@ -103,11 +110,10 @@ public class CsQShopDbLoader {
      */
     public ShopExportData load() throws IOException {
         Path tmpDir = Files.createTempDirectory("qab-chunkscanner-");
-        try {
-            DbPackage pkg = image.load(tmpDir, false);
-
-            // 通过 QShopDbAdapter 读取全部记录（自动合并主库与子库增强数据）
-            QShopDbAdapter adapter = new QShopDbAdapter(pkg);
+        try (DbPackage pkg = image.load(tmpDir, false)) {
+            // 经包声明的适配器读取全部记录（自动合并主库与子库增强数据）；
+            // 包若不是 QShop 数据，getAdaptor 会抛 IllegalStateException
+            QShopDbAdapter adapter = pkg.getAdaptor(QShopDbAdapter.class);
             java.util.List<QShopDbAdapter.Record> records = adapter.getAllRecords();
 
             // 逐条映射为 ShopExportEntry
@@ -131,10 +137,6 @@ public class CsQShopDbLoader {
                 entry.setDetailNbtString(rec.detailNbtString());
                 data.addEntry(entry);
             }
-
-            try {
-                pkg.close();
-            } catch (Exception ignored) { }
 
             LOGGER.info("Loaded {} QShop entries from {}", data.size(), zipPath.getFileName());
             return data;
