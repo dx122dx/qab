@@ -2,7 +2,7 @@ package com.billy65536.qab.integration;
 
 import com.billy65536.chunkscanner.api.DatabaseApi;
 import com.billy65536.chunkscanner.components.analyzer.QShopDbAdapter;
-import com.billy65536.chunkscanner.core.IChunkDb;
+import com.billy65536.chunkscanner.core.db.DbImage;
 import com.billy65536.chunkscanner.core.db.DbPackage;
 import com.billy65536.chunkscanner.core.db.DbValidationResult;
 import com.billy65536.qab.planner.model.ShopExportData;
@@ -20,9 +20,9 @@ import java.nio.file.Path;
  *
  * <h3>加载流程</h3>
  * <ol>
- *   <li>构造时 {@link DatabaseApi#openPackage(Path)} 解析 ZIP 内的 metadata.json（不校验、不解压）；</li>
+ *   <li>构造时 {@link DatabaseApi#openImage(Path)} 解析 ZIP 内的 metadata.json（不校验、不解压）；</li>
  *   <li>调用 {@link #validate()} 校验 metadata 字段合法性与文件 SHA-256 完整性；</li>
- *   <li>调用 {@link #load()}：解压并还原 {@link IChunkDb} 实例；</li>
+ *   <li>调用 {@link #load()}：解压并还原 {@link DbPackage} 实例；</li>
  *   <li>通过 {@link QShopDbAdapter} 读取全部 QShop 记录（自动合并子库增强数据）；</li>
  *   <li>逐条映射为 {@link ShopExportEntry} 并聚合到 {@link ShopExportData}。</li>
  * </ol>
@@ -46,12 +46,12 @@ public class CsQShopDbLoader {
 
     /** 导出 ZIP 文件路径。 */
     private final Path zipPath;
-    /** 已解析的导出包（open 后持有 metadata，可复用 validate/load）。 */
-    private final DbPackage pkg;
+    /** 已解析的导出包镜像（open 后持有 metadata，可复用 validate/load）。 */
+    private final DbImage image;
 
     /**
      * 打开 chunkscanner 导出 ZIP 并解析 metadata。
-     * <p>{@link DatabaseApi#openPackage(Path)} 仅解析 metadata.json，不校验也不解压。
+     * <p>{@link DatabaseApi#openImage(Path)} 仅解析 metadata.json，不校验也不解压。
      *
      * @param zipPath 导出 ZIP 文件路径
      * @throws IOException              文件不存在或 metadata 缺失/可读性错误
@@ -59,7 +59,7 @@ public class CsQShopDbLoader {
      */
     public CsQShopDbLoader(Path zipPath) throws IOException, IllegalArgumentException {
         this.zipPath = zipPath;
-        this.pkg = DatabaseApi.openPackage(zipPath);
+        this.image = DatabaseApi.openImage(zipPath);
     }
 
     /** @return 原始导出 ZIP 文件路径 */
@@ -67,13 +67,13 @@ public class CsQShopDbLoader {
 
     /**
      * 校验导出包合法性。
-     * <p>委托 {@link DbPackage#validate()} 完成：字段合法性（analyzerId/databaseType 是否注册）
+     * <p>委托 {@link DbImage#validate()} 完成：字段合法性（analyzerId/databaseType 是否注册）
      * + 数据完整性（各文件 SHA-256 是否匹配）。
      *
      * @return 校验结果，{@link DbValidationResult#valid()} 为 {@code true} 时方可安全加载
      */
     public DbValidationResult validate() {
-        return this.pkg.validate();
+        return this.image.validate();
     }
 
     /**
@@ -83,9 +83,9 @@ public class CsQShopDbLoader {
      * <h3>执行步骤</h3>
      * <ol>
      *   <li>创建临时目录（前缀 {@code qab-chunkscanner-}）；</li>
-     *   <li>{@link DbPackage#load(Path, boolean) pkg.load(tmpDir, false)}：
-     *       解压 ZIP 并通过 FactoryRegistry 还原 {@link IChunkDb}（{@code false} 跳过校验，
-     *       因调用方通常已先执行 {@link #validate()}）；</li>
+ *   <li>{@link DbImage#load(Path, boolean) image.load(tmpDir, false)}：
+ *       解压 ZIP 并通过 FactoryRegistry 还原 {@link DbPackage}（{@code false} 跳过校验，
+ *       因调用方通常已先执行 {@link #validate()}）；</li>
      *   <li>通过 {@link QShopDbAdapter#getAllRecords()} 读取全部 QShop 记录，<b>已自动合并子库
      *       （id=1）增强数据</b>：包括聊天捕获的物品注册 ID（覆盖 itemId）、flags 合并、
      *       detailNbtString 等；</li>
@@ -104,10 +104,10 @@ public class CsQShopDbLoader {
     public ShopExportData load() throws IOException {
         Path tmpDir = Files.createTempDirectory("qab-chunkscanner-");
         try {
-            IChunkDb db = pkg.load(tmpDir, false);
+            DbPackage pkg = image.load(tmpDir, false);
 
             // 通过 QShopDbAdapter 读取全部记录（自动合并主库与子库增强数据）
-            QShopDbAdapter adapter = new QShopDbAdapter(db);
+            QShopDbAdapter adapter = new QShopDbAdapter(pkg);
             java.util.List<QShopDbAdapter.Record> records = adapter.getAllRecords();
 
             // 逐条映射为 ShopExportEntry
@@ -133,7 +133,7 @@ public class CsQShopDbLoader {
             }
 
             try {
-                db.close();
+                pkg.close();
             } catch (Exception ignored) { }
 
             LOGGER.info("Loaded {} QShop entries from {}", data.size(), zipPath.getFileName());
