@@ -4,7 +4,7 @@ import com.billy65536.chunkscanner.api.DatabaseApi;
 import com.billy65536.chunkscanner.components.analyzer.QShopDbAdapter;
 import com.billy65536.chunkscanner.core.db.DbImage;
 import com.billy65536.chunkscanner.core.db.DbPackage;
-import com.billy65536.chunkscanner.core.db.DbValidationResult;
+import com.billy65536.infrastructure.util.archive.ValidationResult;
 import com.billy65536.qab.planner.model.ShopExportData;
 import com.billy65536.qab.planner.model.ShopExportEntry;
 
@@ -76,7 +76,7 @@ public class CsQShopDbLoader {
      *
      * @return 校验结果，{@link DbValidationResult#valid()} 为 {@code true} 时方可安全加载
      */
-    public DbValidationResult validate() {
+    public ValidationResult validate() {
         return this.image.validate();
     }
 

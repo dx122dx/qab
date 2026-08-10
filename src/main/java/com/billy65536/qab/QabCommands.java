@@ -1,7 +1,7 @@
 package com.billy65536.qab;
 
 import com.billy65536.chunkscanner.api.DatabaseApi;
-import com.billy65536.chunkscanner.core.db.DbValidationResult;
+import com.billy65536.infrastructure.util.archive.ValidationResult;
 import com.billy65536.qab.config.BlockMappingConfig;
 import com.billy65536.qab.config.QabConfig;
 import com.billy65536.qab.generator.ListGenConfig;
@@ -279,7 +279,7 @@ public class QabCommands {
                 return 0;
             }
 
-            DbValidationResult result = selectedDb.validate();
+            ValidationResult result = selectedDb.validate();
             printValidationIssues(ctx, result);
             if(!result.valid()) {
                 ctx.getSource().sendError(Text.translatable("qab.msg.db_select_failed", file, "Invalid database"));
@@ -795,7 +795,7 @@ public class QabCommands {
         }
     }
 
-    private static void printValidationIssues(CommandContext<FabricClientCommandSource> ctx, DbValidationResult vr) {
+    private static void printValidationIssues(CommandContext<FabricClientCommandSource> ctx, ValidationResult vr) {
         boolean hasIssues = vr != null && (!vr.errors().isEmpty() || !vr.warnings().isEmpty());
         if (hasIssues) {
             int errCount = vr.errors().size();

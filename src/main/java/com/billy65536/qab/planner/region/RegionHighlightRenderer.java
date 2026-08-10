@@ -1,7 +1,7 @@
 package com.billy65536.qab.planner.region;
 
-import com.billy65536.infrastructure.core.render.Box;
-import com.billy65536.infrastructure.core.render.BoxRenderer;
+import com.billy65536.infrastructure.util.render.Box;
+import com.billy65536.infrastructure.util.render.BoxRenderer;
 import com.billy65536.qab.config.QabConfig;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
