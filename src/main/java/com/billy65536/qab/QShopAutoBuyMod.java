@@ -18,7 +18,8 @@ public class QShopAutoBuyMod implements ClientModInitializer {
     public void onInitializeClient() {
         LOGGER.info("QShopAutoBuy mod initializing...");
 
-        // 注册命令：/qab select db|list、/qab plan、/qab nav、/qab stash、/qab region
+        // 注册命令：/qab help、/qab select db|list、/qab plan、/qab nav apply|stop、
+        //          /qab stash add|list|remove、/qab generate list、/qab region ...
         QabCommands.register();
         LOGGER.info("Commands registered. Use /qab select db/list, then /qab plan.");
 

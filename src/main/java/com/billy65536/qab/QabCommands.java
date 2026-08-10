@@ -26,7 +26,6 @@ import com.mojang.brigadier.suggestion.SuggestionProvider;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.command.CommandSource;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.hit.BlockHitResult;
@@ -41,7 +40,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -50,7 +48,23 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.arg
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal;
 
 /**
- * QAB 命令注册：/qab select db|list、/qab plan、/qab nav apply、/qab generate list。
+ * QAB 命令注册（全部为客户端命令）。
+ *
+ * <pre>
+ *   /qab help
+ *   /qab select db &lt;file&gt;
+ *   /qab select list &lt;file&gt;
+ *   /qab plan [name]
+ *   /qab nav apply [file]
+ *   /qab nav stop
+ *   /qab stash add|list|remove &lt;index&gt;
+ *   /qab generate list &lt;file&gt; [config...]
+ *   /qab region open|create|visible|save|selector|remove|list
+ * </pre>
+ *
+ * 文件名参数统一用 {@code StringArgumentType.string()}，含会导致 string() 中断的字符（空格及
+ * 命令语法保留字符）时，补全项会以双引号包裹，解析时由 {@link CommandPathHelper#resolveFile}
+ * 去除引号，确保补全内容选中后可直接被命令完整接收。
  */
 public class QabCommands {
     private static final Logger LOGGER = LoggerFactory.getLogger("qab/commands");
@@ -72,97 +86,16 @@ public class QabCommands {
     static CsQShopDbLoader selectedDb = null;
     static Path selectedList = null;
 
-    // ---- auto-complete: .zip basenames in chunkscanner/export/ ----
+    // ---- auto-complete: 委托 CommandPathHelper，含会导致 string() 中断的字符时自动加引号 ----
     private static final SuggestionProvider<FabricClientCommandSource> DB_SUGGESTIONS =
-            (ctx, builder) -> {
-                List<String> names = new ArrayList<>();
-                if (Files.isDirectory(CS_EXPORT_DIR)) {
-                    try (DirectoryStream<Path> ds = Files.newDirectoryStream(CS_EXPORT_DIR, "*.zip")) {
-                        for (Path p : ds) {
-                            String n = p.getFileName().toString();
-                            String bn = n.substring(0, n.length() - 4); // strip ".zip"
-                            if(bn.indexOf(' ') >= 0) {
-                                bn = "\"" + bn + "\"";
-                            }
-                            names.add(bn);
-                        }
-                    } catch (IOException ignored) {
-                    }
-                }
-                return CommandSource.suggestMatching(names, builder);
-            };
-
-    // ---- auto-complete: .json basenames in qab/list/ ----
+            CommandPathHelper.suggestBasenames(CS_EXPORT_DIR, ".zip");
     private static final SuggestionProvider<FabricClientCommandSource> LIST_SUGGESTIONS =
-            (ctx, builder) -> {
-                List<String> names = new ArrayList<>();
-                if (Files.isDirectory(QAB_LIST_DIR)) {
-                    try (DirectoryStream<Path> ds = Files.newDirectoryStream(QAB_LIST_DIR, "*.json")) {
-                        for (Path p : ds) {
-                            String n = p.getFileName().toString();
-                            String bn = n.substring(0, n.length() - 5); // strip ".json"
-                            if(bn.indexOf(' ') >= 0) {
-                                bn = "\"" + bn + "\"";
-                            }
-                            names.add(bn);
-                        }
-                    } catch (IOException ignored) {
-                    }
-                }
-                return CommandSource.suggestMatching(names, builder);
-            };
-
-    // ---- auto-complete: .json basenames in qab/plan/ ----
+            CommandPathHelper.suggestBasenames(QAB_LIST_DIR, ".json");
     private static final SuggestionProvider<FabricClientCommandSource> PLAN_SUGGESTIONS =
-            (ctx, builder) -> {
-                List<String> names = new ArrayList<>();
-                if (Files.isDirectory(QAB_PLAN_DIR)) {
-                    try (DirectoryStream<Path> ds = Files.newDirectoryStream(QAB_PLAN_DIR, "*.json")) {
-                        for (Path p : ds) {
-                            String n = p.getFileName().toString();
-                            String bn = n.substring(0, n.length() - 5); // strip ".json"
-                            if (bn.indexOf(' ') >= 0) {
-                                bn = "\"" + bn + "\"";
-                            }
-                            names.add(bn);
-                        }
-                    } catch (IOException ignored) {
-                    }
-                }
-                return CommandSource.suggestMatching(names, builder);
-            };
-
-    // ---- auto-complete: schematic basenames in schematics/ ----
+            CommandPathHelper.suggestBasenames(QAB_PLAN_DIR, ".json");
     private static final SuggestionProvider<FabricClientCommandSource> SCHEMATIC_SUGGESTIONS =
-            (ctx, builder) -> {
-                List<String> names = new ArrayList<>();
-                if (Files.isDirectory(SCHEMATICS_DIR)) {
-                    try (DirectoryStream<Path> ds = Files.newDirectoryStream(SCHEMATICS_DIR)) {
-                        for (Path p : ds) {
-                            if (!Files.isRegularFile(p)) continue;
-                            String n = p.getFileName().toString();
-                            String ext = matchedExtension(n);
-                            if (ext == null) continue;
-                            String bn = n.substring(0, n.length() - ext.length());
-                            if (bn.indexOf(' ') >= 0) {
-                                bn = "\"" + bn + "\"";
-                            }
-                            names.add(bn);
-                        }
-                    } catch (IOException ignored) {
-                    }
-                }
-                return CommandSource.suggestMatching(names, builder);
-            };
-
-    /** 返回文件名匹配到的原理图扩展名（含点），不匹配返回 null。 */
-    private static String matchedExtension(String fileName) {
-        String lower = fileName.toLowerCase();
-        for (String ext : SCHEMATIC_EXTENSIONS) {
-            if (lower.endsWith(ext)) return ext;
-        }
-        return null;
-    }
+            CommandPathHelper.suggestBasenames(SCHEMATICS_DIR,
+                    ".litematic", ".schem", ".schematic", ".nbt");
 
     // ---- register ----
     public static void register() {
@@ -245,12 +178,15 @@ public class QabCommands {
                                     .executes(QabCommands::execRegionRemove)))
                     .then(literal("list").executes(QabCommands::execRegionList));
 
+            var help = literal("help").executes(QabCommands::execHelp);
+
             root.then(select);
             root.then(plan);
             root.then(nav);
             root.then(stash);
             root.then(generate);
             root.then(region);
+            root.then(help);
 
             dispatcher.register(root);
             LOGGER.info("Registered /qab commands");
@@ -260,10 +196,8 @@ public class QabCommands {
     // ---- select db ----
     private static int execSelectDb(CommandContext<FabricClientCommandSource> ctx) {
         String file = StringArgumentType.getString(ctx, "file");
-        Path candidate = CS_EXPORT_DIR.resolve(file + ".zip");
-        Path direct = Path.of(file);
-        Path target = Files.exists(candidate)? candidate: direct;
-        if (Files.exists(target)) {
+        Path target = CommandPathHelper.resolveFile(CS_EXPORT_DIR, file, ".zip");
+        if (target != null && Files.exists(target)) {
             try {
                 selectedDb = new CsQShopDbLoader(target);
             } catch (Exception e) {
@@ -300,19 +234,11 @@ public class QabCommands {
     // ---- select list ----
     private static int execSelectList(CommandContext<FabricClientCommandSource> ctx) {
         String file = StringArgumentType.getString(ctx, "file");
-        Path candidate = QAB_LIST_DIR.resolve(file + ".json");
-        if (Files.exists(candidate)) {
-            selectedList = candidate;
+        Path target = CommandPathHelper.resolveFile(QAB_LIST_DIR, file, ".json");
+        if (target != null) {
+            selectedList = target;
             ctx.getSource().sendFeedback(Text.translatable("qab.msg.list_selected",
-                    candidate.getFileName().toString(), candidate.toString()));
-            LOGGER.info("Selected list: {}", selectedList);
-            return 1;
-        }
-        Path direct = Path.of(file);
-        if (Files.exists(direct)) {
-            selectedList = direct;
-            ctx.getSource().sendFeedback(Text.translatable("qab.msg.list_selected",
-                    direct.getFileName().toString(), direct.toString()));
+                    target.getFileName().toString(), target.toString()));
             LOGGER.info("Selected list: {}", selectedList);
             return 1;
         }
@@ -502,16 +428,8 @@ public class QabCommands {
 
     /** 在 schematics/ 下按已知扩展名解析文件名，找不到则回退到全局路径。 */
     private static Path resolveSchematic(String file) {
-        if (matchedExtension(file) != null) {
-            Path withExt = SCHEMATICS_DIR.resolve(file);
-            if (Files.isRegularFile(withExt)) return withExt;
-        }
-        for (String ext : SCHEMATIC_EXTENSIONS) {
-            Path candidate = SCHEMATICS_DIR.resolve(file + ext);
-            if (Files.isRegularFile(candidate)) return candidate;
-        }
-        Path direct = Path.of(file);
-        return Files.isRegularFile(direct) ? direct : null;
+        return CommandPathHelper.resolveFile(SCHEMATICS_DIR, file,
+                SCHEMATIC_EXTENSIONS.toArray(new String[0]));
     }
 
     /** 去除文件名中的非法字符，避免写入失败或目录穿越。 */
@@ -532,9 +450,8 @@ public class QabCommands {
         }
 
         // file 逻辑与 select list 同：先找 qab/plan/<file>.json，否则当全局路径
-        Path candidate = QAB_PLAN_DIR.resolve(file + ".json");
-        Path target = Files.exists(candidate) ? candidate : Path.of(file);
-        if (!Files.exists(target)) {
+        Path target = CommandPathHelper.resolveFile(QAB_PLAN_DIR, file, ".json");
+        if (target == null) {
             ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_not_found", file, QAB_PLAN_DIR.toString()));
             return 0;
         }
@@ -588,6 +505,35 @@ public class QabCommands {
         int remaining = CsNavigationHelper.stop();
         ctx.getSource().sendFeedback(Text.translatable("qab.msg.nav_stop_done", remaining)
                 .formatted(Formatting.YELLOW));
+        return 1;
+    }
+
+    // ---- help: 列出全部子命令与一句话用途 ----
+    private static int execHelp(CommandContext<FabricClientCommandSource> ctx) {
+        ctx.getSource().sendFeedback(Text.translatable("qab.help.header").formatted(Formatting.AQUA));
+        String[] keys = {
+                "qab.help.select_db",
+                "qab.help.select_list",
+                "qab.help.plan",
+                "qab.help.nav_apply",
+                "qab.help.nav_stop",
+                "qab.help.stash_add",
+                "qab.help.stash_list",
+                "qab.help.stash_remove",
+                "qab.help.generate_list",
+                "qab.help.region_open",
+                "qab.help.region_create",
+                "qab.help.region_create_coords",
+                "qab.help.region_visible",
+                "qab.help.region_save",
+                "qab.help.region_selector",
+                "qab.help.region_remove",
+                "qab.help.region_list",
+                "qab.help.help",
+        };
+        for (String key : keys) {
+            ctx.getSource().sendFeedback(Text.translatable(key).formatted(Formatting.GRAY));
+        }
         return 1;
     }
 

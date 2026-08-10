@@ -78,5 +78,25 @@
     "qab.msg.region_list_header": "区域表“%s”（共 %d 个区域）：",
     "qab.msg.region_no_target": "请先把准星对准一个方块。",
     "qab.msg.region_no_corner": "请先用左键点击方块设置第一角。",
-    "qab.msg.region_corner_set": "区域“%s”第一角已设在 %s(%d,%d,%d)，右键完成创建。"
+    "qab.msg.region_corner_set": "区域“%s”第一角已设在 %s(%d,%d,%d)，右键完成创建。",
+
+    "qab.help.header": "QAB 命令一览：",
+    "qab.help.select_db": "  /qab select db <file> - 选择 ChunkScanner 导出的 QShop 数据库（zip）。",
+    "qab.help.select_list": "  /qab select list <file> - 选择购物清单（json）。",
+    "qab.help.plan": "  /qab plan [name] - 根据已选数据库 + 清单生成购物计划。",
+    "qab.help.nav_apply": "  /qab nav apply [file] - 按计划自动寻路并到达自动购买。",
+    "qab.help.nav_stop": "  /qab nav stop - 中止自动购买流程。",
+    "qab.help.stash_add": "  /qab stash add - 把准星所指箱子添加为存货点。",
+    "qab.help.stash_list": "  /qab stash list - 列出所有存货点。",
+    "qab.help.stash_remove": "  /qab stash remove <index> - 按序号（从 1 开始）删除存货点。",
+    "qab.help.generate_list": "  /qab generate list <file> [config...] - 解析原理图生成购物清单。",
+    "qab.help.region_open": "  /qab region open <name> - 打开或新建区域表。",
+    "qab.help.region_create": "  /qab region create <name> - 开启区域选择器（左/右键记两角）。",
+    "qab.help.region_create_coords": "  /qab region create <name> <x1> <y1> <z1> <x2> <y2> <z2> - 用坐标直接创建区域。",
+    "qab.help.region_visible": "  /qab region visible [on|off] - 切换区域高亮渲染。",
+    "qab.help.region_save": "  /qab region save - 保存当前区域表。",
+    "qab.help.region_selector": "  /qab region selector [on|off] - 切换区域选择器。",
+    "qab.help.region_remove": "  /qab region remove <name> - 按名称删除区域。",
+    "qab.help.region_list": "  /qab region list - 列出当前区域表所有区域。",
+    "qab.help.help": "  /qab help - 显示本帮助。"
 }

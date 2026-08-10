@@ -77,5 +77,25 @@
     "qab.msg.region_list_header": "Region table '%s' (%d region(s)):",
     "qab.msg.region_no_target": "Look at a block first (crosshair must point at a block).",
     "qab.msg.region_no_corner": "Left-click a block first to set the first corner.",
-    "qab.msg.region_corner_set": "Region '%s' first corner set at %s(%d,%d,%d). Right-click to finish."
+    "qab.msg.region_corner_set": "Region '%s' first corner set at %s(%d,%d,%d). Right-click to finish.",
+
+    "qab.help.header": "QAB commands:",
+    "qab.help.select_db": "  /qab select db <file> - Select a QShop database exported by ChunkScanner (zip).",
+    "qab.help.select_list": "  /qab select list <file> - Select a shopping list (json).",
+    "qab.help.plan": "  /qab plan [name] - Generate a shopping plan from the selected db + list.",
+    "qab.help.nav_apply": "  /qab nav apply [file] - Auto-navigate and buy according to a plan.",
+    "qab.help.nav_stop": "  /qab nav stop - Stop the auto-buy run.",
+    "qab.help.stash_add": "  /qab stash add - Add the looked-at chest as a stash point.",
+    "qab.help.stash_list": "  /qab stash list - List all stash points.",
+    "qab.help.stash_remove": "  /qab stash remove <index> - Remove a stash point by its number (from 1).",
+    "qab.help.generate_list": "  /qab generate list <file> [config...] - Generate a shopping list from a schematic.",
+    "qab.help.region_open": "  /qab region open <name> - Open or create a region table.",
+    "qab.help.region_create": "  /qab region create <name> - Start the region selector (left/right click two corners).",
+    "qab.help.region_create_coords": "  /qab region create <name> <x1> <y1> <z1> <x2> <y2> <z2> - Create a region by coordinates.",
+    "qab.help.region_visible": "  /qab region visible [on|off] - Toggle region highlight rendering.",
+    "qab.help.region_save": "  /qab region save - Persist the current region table.",
+    "qab.help.region_selector": "  /qab region selector [on|off] - Toggle the region selector.",
+    "qab.help.region_remove": "  /qab region remove <name> - Remove a region by name.",
+    "qab.help.region_list": "  /qab region list - List all regions in the current table.",
+    "qab.help.help": "  /qab help - Show this help."
 }
