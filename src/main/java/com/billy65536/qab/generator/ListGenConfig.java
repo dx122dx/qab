@@ -23,7 +23,10 @@ import java.util.Locale;
  *   <li>{@code multiplier} —— 数量倍率，对统计结果整体乘以该值，默认 1.0</li>
  *   <li>{@code min} —— 单项最小数量，低于该值的条目被提升到该值，默认不限制</li>
  *   <li>{@code threshold} —— 单项最小数量阈值，低于该值的条目被丢弃，默认 1</li>
- *   <li>{@code blockEntity} —— 是否把方块实体计入统计（true/false），默认 false</li>
+ *   <li>{@code blockEntity} —— 是否把容器方块实体<b>内部存放的物品</b>计入统计
+ *       （true/false），默认 false。容器方块本身始终由方块统计负责，不受此项影响</li>
+ *   <li>{@code deductInventory} —— 是否从需求量中扣除玩家背包（含潜影盒）现有物品，
+ *       默认 false。开启后清单只列出还缺的部分</li>
  *   <li>{@code rawId} —— 是否保留原始方块 ID 而不转换为可购买物品 ID，默认 false。
  *       默认会把 {@code wall_torch} 之类的特殊形式映射为 {@code torch}；
  *       开启后按方块 ID 原样输出（通常仅用于调试）</li>
@@ -67,8 +70,11 @@ public class ListGenConfig {
     /** 单项数量阈值（丢弃）。null = 1。 */
     public Integer threshold;
 
-    /** 是否统计方块实体。null = false。 */
+    /** 是否统计容器方块实体内部存放的物品。null = false。 */
     public Boolean includeBlockEntities;
+
+    /** 是否扣除玩家背包现有物品。null = false。 */
+    public Boolean deductInventory;
 
     /** 是否保留原始方块 ID（不做方块→物品映射）。null = false。 */
     public Boolean rawId;
@@ -118,6 +124,7 @@ public class ListGenConfig {
                     case "min" -> config.minCount = requireNonNegative(key, Integer.parseInt(value));
                     case "threshold" -> config.threshold = requireNonNegative(key, Integer.parseInt(value));
                     case "blockentity", "blockentities" -> config.includeBlockEntities = parseBoolean(key, value);
+                    case "deductinventory", "deductinv" -> config.deductInventory = parseBoolean(key, value);
                     case "rawid", "raw" -> config.rawId = parseBoolean(key, value);
                     case "exclude", "excludes" -> config.addExcludes(value);
                     case "sort" -> config.sort = parseSort(value);
@@ -205,6 +212,10 @@ public class ListGenConfig {
         return includeBlockEntities != null && includeBlockEntities;
     }
 
+    public boolean deductInventoryOrDefault() {
+        return deductInventory != null && deductInventory;
+    }
+
     public boolean rawIdOrDefault() {
         return rawId != null && rawId;
     }
@@ -224,6 +235,7 @@ public class ListGenConfig {
         if (minCount != null) sb.append("min=").append(minCount).append(' ');
         if (threshold != null) sb.append("threshold=").append(threshold).append(' ');
         if (includeBlockEntities != null) sb.append("blockEntity=").append(includeBlockEntities).append(' ');
+        if (deductInventory != null) sb.append("deductInventory=").append(deductInventory).append(' ');
         if (rawId != null) sb.append("rawId=").append(rawId).append(' ');
         if (!excludes.isEmpty()) sb.append("exclude=").append(String.join(",", excludes)).append(' ');
         if (sort != null) sb.append("sort=").append(sort.name().toLowerCase(Locale.ROOT)).append(' ');

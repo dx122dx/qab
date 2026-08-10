@@ -94,9 +94,11 @@ public final class BlockMappingConfig {
 
     // ---- 内置默认表（原 BlockItemResolver 中的三张表，作为出厂值） ----
 
+    // 注意：water / lava 不在此列 —— 它们由 BlockStateRules 按 level 判定：
+    // 源方块（level=0）映射为对应的桶，流动的部分则跳过。
     private static final Set<String> DEFAULT_UNOBTAINABLE = Set.of(
             "minecraft:air", "minecraft:cave_air", "minecraft:void_air", "minecraft:structure_void",
-            "minecraft:water", "minecraft:lava", "minecraft:bubble_column",
+            "minecraft:bubble_column",
             "minecraft:fire", "minecraft:soul_fire",
             "minecraft:nether_portal", "minecraft:end_portal", "minecraft:end_gateway",
             "minecraft:piston_head", "minecraft:moving_piston",

@@ -1,5 +1,7 @@
 package com.billy65536.qab.generator;
 
+import net.minecraft.client.MinecraftClient;
+
 import net.sandrohc.schematic4j.SchematicLoader;
 import net.sandrohc.schematic4j.schematic.Schematic;
 import net.sandrohc.schematic4j.schematic.types.SchematicBlock;
@@ -15,6 +17,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -26,9 +29,14 @@ import java.util.Map;
  * <p>统计规则：
  * <ul>
  *   <li>忽略空气类方块（air / cave_air / void_air / structure_void）</li>
- *   <li>忽略方块状态，仅按方块 ID 聚合</li>
+ *   <li><b>按方块状态精确计数</b>：双台阶算 2 个、雪层/蜡烛/海泡菜按数量、
+ *       门床与高草的上半部跳过（避免翻倍）、液体源方块换算成桶。
+ *       详见 {@link BlockStateRules}</li>
  *   <li>经 {@link BlockItemResolver} 把方块 ID 转成实际可购买的物品 ID
  *       （如 {@code wall_torch → torch}），可用 {@code rawId=true} 关闭</li>
+ *   <li>{@code blockEntity=true} 时额外统计容器<b>内部存放的物品</b>
+ *       （容器方块本身始终由方块统计负责，二者不重叠）</li>
+ *   <li>{@code deductInventory=true} 时扣除玩家背包（含潜影盒）已有物品</li>
  *   <li>按配置应用倍率、冗余、阈值、排除与排序</li>
  * </ul>
  */
@@ -46,11 +54,17 @@ public class SchematicListGenerator {
     /**
      * 生成结果，附带统计信息用于命令回显。
      *
-     * @param unobtainable 无法购买的方块 ID → 数量（如流体、火、活塞头），已从清单剔除
+     * @param unobtainable    无法购买的方块 ID → 数量（如火、活塞头），已从清单剔除
+     * @param stateSkipped    因方块状态规则而跳过的方块数（门床上半部、流动液体等）
+     * @param containerItems  从容器内部统计到的物品总数
+     * @param deducted        因玩家已持有而扣除的物品 ID → 数量
+     * @param inventoryUnavailable 请求了库存扣除但玩家不可用（未进入世界）
      */
     public record Result(ShoppingList list, int blockTypes, long totalBlocks, int skipped,
                          int width, int height, int length,
-                         Map<String, Long> unobtainable) {
+                         Map<String, Long> unobtainable,
+                         long stateSkipped, long containerItems,
+                         Map<String, Long> deducted, boolean inventoryUnavailable) {
     }
 
     private SchematicListGenerator() {
@@ -76,7 +90,8 @@ public class SchematicListGenerator {
         while (it.hasNext()) {
             SchematicBlock block = it.next().right();
             if (block == null) continue;
-            acc.add(block.block());
+            // 传入方块状态，交由解析链做精确计数
+            acc.add(block.block(), block.states());
         }
 
         if (config.includeBlockEntitiesOrDefault()) {
@@ -84,7 +99,9 @@ public class SchematicListGenerator {
             while (beIt.hasNext()) {
                 SchematicBlockEntity be = beIt.next();
                 if (be == null) continue;
-                acc.add(be.name());
+                // 只统计容器内含物：容器方块本身已在上面的方块遍历中计过，
+                // 若在此处再按 be.name() 加一次就会重复计数。
+                ContainerItemCounter.count(be, acc::addItem);
             }
         }
 
@@ -94,6 +111,21 @@ public class SchematicListGenerator {
 
         List<ShoppingItem> items = buildItems(counts, config);
 
+        // 库存扣除置于倍率/最小值/阈值之后：倍率放大的是「需求」，
+        // 若先扣除再放大，会把玩家已有的部分也一并放大，得出错误结果。
+        Map<String, Long> deducted = new LinkedHashMap<>();
+        boolean inventoryUnavailable = false;
+        if (config.deductInventoryOrDefault()) {
+            MinecraftClient client = MinecraftClient.getInstance();
+            var player = client == null ? null : client.player;
+            if (player == null) {
+                inventoryUnavailable = true;
+                LOGGER.warn("deductInventory requested but no player available; skipping deduction");
+            } else {
+                items = deductInventory(items, PlayerInventoryCounter.countAll(player), deducted);
+            }
+        }
+
         ShoppingList list = new ShoppingList();
         list.setVersion(LIST_VERSION);
         list.setName(resolveName(schematicPath, schematic, config));
@@ -101,12 +133,48 @@ public class SchematicListGenerator {
         list.setRedundancy(config.redundancyOrDefault());
         list.setItems(items);
 
-        LOGGER.info("Generated list from {}: {} type(s), {} block(s), {} skipped",
-                schematicPath.getFileName(), items.size(), totalBlocks, skipped);
+        LOGGER.info("Generated list from {}: {} type(s), {} block(s), {} skipped, {} state-skipped, {} container item(s)",
+                schematicPath.getFileName(), items.size(), totalBlocks, skipped,
+                acc.stateSkipped, acc.containerItems);
 
         return new Result(list, items.size(), totalBlocks, skipped,
                 schematic.width(), schematic.height(), schematic.length(),
-                acc.unobtainable);
+                acc.unobtainable, acc.stateSkipped, acc.containerItems,
+                deducted, inventoryUnavailable);
+    }
+
+    /**
+     * 从清单中扣除玩家已持有的物品，只保留还缺的部分。
+     *
+     * @param items    原始清单项
+     * @param owned    玩家持有量
+     * @param deducted 输出参数：记录实际扣除的物品与数量，供命令回显
+     * @return 扣除后的清单（已完全满足的物品会被移除）
+     */
+    private static List<ShoppingItem> deductInventory(List<ShoppingItem> items,
+                                                      Map<String, Long> owned,
+                                                      Map<String, Long> deducted) {
+        if (owned.isEmpty()) {
+            return items;
+        }
+        List<ShoppingItem> result = new ArrayList<>(items.size());
+        for (ShoppingItem item : items) {
+            long have = owned.getOrDefault(item.getId(), 0L);
+            if (have <= 0) {
+                result.add(item);
+                continue;
+            }
+            long need = item.getCount();
+            long used = Math.min(have, need);
+            deducted.merge(item.getId(), used, Long::sum);
+
+            long remaining = need - used;
+            if (remaining > 0) {
+                result.add(new ShoppingItem(item.getId(), (int) remaining));
+            }
+            // remaining == 0：已完全满足，不再列入清单
+        }
+        return result;
     }
 
     /**
@@ -119,12 +187,22 @@ public class SchematicListGenerator {
         final Map<String, Long> unobtainable = new HashMap<>();
         long totalBlocks = 0L;
         int skipped = 0;
+        /** 因方块状态规则被跳过的方块数（上半部、流动液体等）。 */
+        long stateSkipped = 0L;
+        /** 从容器内部统计到的物品总数。 */
+        long containerItems = 0L;
 
         Accumulator(ListGenConfig config) {
             this.config = config;
         }
 
-        void add(String rawId) {
+        /**
+         * 统计一个方块。
+         *
+         * @param rawId  原始方块 ID
+         * @param states 方块状态，可为 null
+         */
+        void add(String rawId, Map<String, String> states) {
             String blockId = normalizeId(rawId);
             if (blockId == null || isAir(blockId)) return;
 
@@ -136,12 +214,25 @@ public class SchematicListGenerator {
             }
 
             if (config.rawIdOrDefault()) {
-                counts.merge(blockId, 1L, Long::sum);
-                totalBlocks++;
+                // 调试模式保留原始方块 ID，但仍需套用状态跳过规则，
+                // 否则门/床的上半部依旧会造成翻倍。
+                BlockStateRules.StateResult rule = BlockStateRules.evaluate(
+                        blockId, BlockStateResolver.resolve(blockId, states), states);
+                if (rule.skip()) {
+                    stateSkipped++;
+                    return;
+                }
+                int n = Math.max(1, rule.multiplier());
+                counts.merge(blockId, (long) n, Long::sum);
+                totalBlocks += n;
                 return;
             }
 
-            BlockItemResolver.Resolved resolved = BlockItemResolver.resolve(blockId);
+            BlockItemResolver.Resolved resolved = BlockItemResolver.resolve(blockId, states);
+            if (resolved.skip()) {
+                stateSkipped++;
+                return;
+            }
             if (resolved.unobtainable()) {
                 unobtainable.merge(blockId, 1L, Long::sum);
                 return;
@@ -150,6 +241,23 @@ public class SchematicListGenerator {
                 counts.merge(e.getKey(), (long) e.getValue(), Long::sum);
                 totalBlocks += e.getValue();
             }
+        }
+
+        /**
+         * 直接统计一个物品（用于容器内含物，无需再走方块→物品映射）。
+         *
+         * @param itemId 物品 ID
+         * @param amount 数量
+         */
+        void addItem(String itemId, long amount) {
+            if (itemId == null || amount <= 0) return;
+            if (isExcluded(itemId, config.excludes)) {
+                skipped++;
+                return;
+            }
+            counts.merge(itemId, amount, Long::sum);
+            totalBlocks += amount;
+            containerItems += amount;
         }
     }
 
@@ -167,6 +275,11 @@ public class SchematicListGenerator {
             }
             if (scaled < threshold || scaled <= 0) {
                 continue;
+            }
+            if (scaled > Integer.MAX_VALUE) {
+                // 状态倍数（如 layers=8）叠加高倍率后可能溢出，截断并留痕便于排查
+                LOGGER.warn("Count for {} exceeds int range ({}), clamped to {}",
+                        e.getKey(), scaled, Integer.MAX_VALUE);
             }
             int count = (int) Math.min(scaled, Integer.MAX_VALUE);
             items.add(new ShoppingItem(e.getKey(), count));
@@ -210,7 +323,12 @@ public class SchematicListGenerator {
         return sb.toString();
     }
 
-    /** 去掉方块状态并补全命名空间。 */
+    /**
+     * 规范化方块 ID：补全命名空间。
+     *
+     * <p>schematic4j 的 {@code block()} 已剥离方块状态，此处仍兜底去掉 {@code [...]}
+     * 以防原理图数据异常。
+     */
     private static String normalizeId(String raw) {
         if (raw == null) return null;
         String id = raw.trim().toLowerCase(Locale.ROOT);

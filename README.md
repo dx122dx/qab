@@ -70,7 +70,8 @@ cd ../qab && sh ./gradlew build
 | `multiplier` / `mult` | 数量倍率 | 1.0 |
 | `min` | 单项最小数量（低于则提升到该值） | 不限制 |
 | `threshold` | 单项数量阈值（低于则丢弃） | 1 |
-| `blockentity` / `blockentities` | 是否统计方块实体 | false |
+| `blockentity` / `blockentities` | 是否统计容器**内部存放的物品**（箱子/漏斗等） | false |
+| `deductinventory` / `deductinv` | 扣除背包（含潜影盒）已有物品，只列缺口 | false |
 | `rawid` / `raw` | 保留原始方块 ID（不做方块→物品映射，调试用） | false |
 | `exclude` / `excludes` | 排除的方块 ID，逗号分隔，支持 `*` 通配，可多次出现 | 无 |
 | `sort` | `count`（数量降序，默认）/ `id`（ID 升序） | count |
@@ -79,9 +80,27 @@ cd ../qab && sh ./gradlew build
 
 ```
 /qab generate list my_house redundancy=64 multiplier=2 exclude=air,*_sign sort=id
+/qab generate list my_house deductinventory=true blockentity=true
 ```
 
-流体、火、活塞头等无法购买的方块会从清单剔除，并在聊天栏提示数量。
+#### 统计规则
+
+清单按**方块状态**精确计数，而非简单按方块 ID 累加：
+
+| 情形 | 处理 |
+| --- | --- |
+| 双台阶 `type=double` | 计 2 个台阶 |
+| 雪层 / 蜡烛 / 海泡菜 | 按 `layers` / `candles` / `pickles` 的数值计数 |
+| 门、床、高草、向日葵的上半部（`half=upper`、`part=head`） | 跳过，避免数量翻倍 |
+| 水 / 岩浆源方块（`level=0`） | 换算为水桶 / 岩浆桶 |
+| 流动的水 / 岩浆（`level>0`） | 跳过 |
+| 火、活塞头等技术性方块 | 无法购买，从清单剔除并在聊天栏提示 |
+
+方块状态经 Minecraft 注册表还原为真实 `BlockState` 后判定，因此模组方块只要复用原版属性即可自动适配。原理图来自其他游戏版本时，无法识别的状态会被静默忽略而不影响整体生成。
+
+`blockentity=true` 只统计容器**里装的物品**；容器方块本身始终由方块统计负责，两者不会重复计数。
+
+`deductinventory=true` 会在应用倍率、最小值与阈值**之后**再扣除背包库存（先扣再放大会把已有量一并放大），已完全满足的物品不再列入清单。
 
 **方式 B：使用已有清单**
 
@@ -177,9 +196,13 @@ QAB 运行时配置（文件不存在时使用默认值）：
 
 方块 → 物品映射配置，覆盖内置默认表（每次 `/qab generate list` 时实时重新加载，改 JSON 无需重启）：
 
-- `unobtainable`：无法购买的方块 ID 列表（流体、火、活塞头等），取内置与配置的并集；
+- `unobtainable`：无法购买的方块 ID 列表（火、活塞头等），取内置与配置的并集；
 - `irregular`：不规则单映射 `方块ID: 物品ID`，按 key 覆盖内置并可追加；
 - `composite`：组合方块 `方块ID: [物品ID, ...]`。
+
+这三张表的优先级**高于**内置的方块状态特例，因此可用于覆盖默认行为。
+
+> 注意：水与岩浆不在 `unobtainable` 中——它们由状态规则按 `level` 判定，源方块换算为对应的桶。若希望完全不购买液体，可在配置中把 `minecraft:water` / `minecraft:lava` 加入 `unobtainable`。
 
 文件不存在或解析失败时回退内置默认表并告警。
 

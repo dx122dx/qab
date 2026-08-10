@@ -410,6 +410,33 @@ public class QabCommands {
             ctx.getSource().sendFeedback(Text.translatable("qab.msg.gen_list_unobtainable",
                     result.unobtainable().size(), unobtainableTotal, preview).formatted(Formatting.YELLOW));
         }
+        // 因方块状态规则跳过的方块（门床上半部、流动液体等），说明数量为何少于方块总数
+        if (result.stateSkipped() > 0) {
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.gen_list_state_skipped",
+                    result.stateSkipped()).formatted(Formatting.GRAY));
+        }
+        // 容器内含物
+        if (result.containerItems() > 0) {
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.gen_list_container_items",
+                    result.containerItems()).formatted(Formatting.GRAY));
+        }
+        // 库存扣除
+        if (result.inventoryUnavailable()) {
+            ctx.getSource().sendFeedback(
+                    Text.translatable("qab.msg.gen_list_inventory_unavailable").formatted(Formatting.YELLOW));
+        } else if (!result.deducted().isEmpty()) {
+            long deductedTotal = result.deducted().values().stream().mapToLong(Long::longValue).sum();
+            String deductedPreview = result.deducted().entrySet().stream()
+                    .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                    .limit(5)
+                    .map(e -> e.getKey() + " x" + e.getValue())
+                    .collect(Collectors.joining(", "));
+            if (result.deducted().size() > 5) {
+                deductedPreview += ", ...";
+            }
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.gen_list_deducted",
+                    result.deducted().size(), deductedTotal, deductedPreview).formatted(Formatting.GRAY));
+        }
         String display = config.toDisplayString();
         if (!display.isEmpty()) {
             ctx.getSource().sendFeedback(Text.translatable("qab.msg.gen_list_config", display)
