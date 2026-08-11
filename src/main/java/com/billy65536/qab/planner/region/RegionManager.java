@@ -73,7 +73,7 @@ public final class RegionManager {
      */
     public static boolean open(String name) {
         if (name == null || name.isBlank()) return false;
-        Path file = REGION_DIR.resolve(sanitize(name) + ".json");
+        Path file = REGION_DIR.resolve(sanitizeName(name) + ".json");
         if (Files.exists(file)) {
             try {
                 String json = Files.readString(file, StandardCharsets.UTF_8);
@@ -103,7 +103,7 @@ public final class RegionManager {
         ensureTable();
         try {
             Files.createDirectories(REGION_DIR);
-            Path file = REGION_DIR.resolve(sanitize(currentTableName) + ".json");
+            Path file = REGION_DIR.resolve(sanitizeName(currentTableName) + ".json");
             Files.writeString(file, GSON.toJson(currentTable), StandardCharsets.UTF_8);
             LOGGER.info("Saved region table '{}' ({} region(s)) to {}",
                     currentTableName, currentTable.size(), file);
@@ -140,8 +140,13 @@ public final class RegionManager {
         return removed;
     }
 
+    /** 区域表目录（{@code <gameDir>/qab/region}）。 */
+    public static Path regionDir() {
+        return REGION_DIR;
+    }
+
     /** 去除文件名非法字符，避免写入失败或目录穿越。 */
-    private static String sanitize(String name) {
+    public static String sanitizeName(String name) {
         String s = name.trim().replaceAll("[\\\\/:*?\"<>|]", "_");
         return s.isBlank() ? DEFAULT_TABLE : s;
     }

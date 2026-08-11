@@ -1,7 +1,9 @@
 package com.billy65536.qab;
 
 import com.billy65536.chunkscanner.api.DatabaseApi;
+import com.billy65536.infrastructure.util.archive.ArchiveWriter;
 import com.billy65536.infrastructure.util.archive.ValidationResult;
+import com.billy65536.qab.compound.CompoundImage;
 import com.billy65536.qab.config.BlockMappingConfig;
 import com.billy65536.qab.automatic.ShoppingRunner;
 import com.billy65536.qab.config.QabConfig;
@@ -20,6 +22,7 @@ import com.billy65536.qab.planner.model.ShoppingList;
 import com.billy65536.qab.planner.model.ShoppingPlan;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
@@ -61,6 +64,7 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.lit
  *   /qab stash add|list|remove &lt;index&gt;
  *   /qab generate list &lt;file&gt; [config...]
  *   /qab region open|create|visible|save|selector|remove|list
+ *   /qab compound save|open [name]
  * </pre>
  *
  * 文件名参数统一用 {@code StringArgumentType.string()}，含会导致 string() 中断的字符（空格及
@@ -77,6 +81,7 @@ public class QabCommands {
     private static final Path QAB_DIR = GAME_DIR.resolve("qab");
     private static final Path QAB_LIST_DIR = QAB_DIR.resolve("list");
     private static final Path QAB_PLAN_DIR = QAB_DIR.resolve("plan");
+    private static final Path QAB_COMPOUND_DIR = QAB_DIR.resolve("compound");
 
     /** schematic4j 支持的原理图扩展名。 */
     private static final List<String> SCHEMATIC_EXTENSIONS =
@@ -97,6 +102,11 @@ public class QabCommands {
     private static final SuggestionProvider<FabricClientCommandSource> SCHEMATIC_SUGGESTIONS =
             CommandPathHelper.suggestBasenames(SCHEMATICS_DIR,
                     ".litematic", ".schem", ".schematic", ".nbt");
+    private static final SuggestionProvider<FabricClientCommandSource> COMPOUND_SUGGESTIONS =
+            CommandPathHelper.suggestBasenames(QAB_COMPOUND_DIR, ".qcmp");
+
+    /** 分区表 JSON 序列化器（与 RegionManager 一致的 pretty 格式）。 */
+    private static final Gson COMPOUND_GSON = new GsonBuilder().setPrettyPrinting().create();
 
     // ---- register ----
     public static void register() {
@@ -181,6 +191,18 @@ public class QabCommands {
                                     .executes(QabCommands::execRegionRemove)))
                     .then(literal("list").executes(QabCommands::execRegionList));
 
+            // /qab compound save|open [name] —— 利用基础设施归档工具打包/解包 DB + 分区表
+            var compound = literal("compound")
+                    .then(literal("save")
+                            .executes(ctx -> execCompoundSave(ctx, null))
+                            .then(argument("name", StringArgumentType.string())
+                                    .executes(ctx -> execCompoundSave(ctx,
+                                            StringArgumentType.getString(ctx, "name")))))
+                    .then(literal("open")
+                            .then(argument("name", StringArgumentType.string())
+                                    .suggests(COMPOUND_SUGGESTIONS)
+                                    .executes(QabCommands::execCompoundOpen)));
+
             var help = literal("help").executes(QabCommands::execHelp);
 
             root.then(select);
@@ -189,6 +211,7 @@ public class QabCommands {
             root.then(stash);
             root.then(generate);
             root.then(region);
+            root.then(compound);
             root.then(help);
 
             dispatcher.register(root);
@@ -567,6 +590,119 @@ public class QabCommands {
         return 1;
     }
 
+    // ---- compound save/open: 利用基础设施归档工具打包/解包 DB + 分区表 ----
+    /**
+     * 把当前选中的 DB 与当前分区表打包为复合包。
+     *
+     * <p>复合包为基础设施归档格式（ZIP 注释携带框架元数据）：DB 导出 ZIP 以 STORED 原样内嵌
+     * （已是压缩数据，免二次 deflate），分区表以 JSON 文本 entry 写入；业务信息（DB 文件名、
+     * 分区表名、区域数）记录在元数据 {@code business} 段，供解包时还原。</p>
+     *
+     * @param name 复合包名（可空，缺省取 DB 文件名去掉 {@code .zip} 后缀）
+     */
+    private static int execCompoundSave(CommandContext<FabricClientCommandSource> ctx, String name) {
+        if (selectedDb == null) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.compound_no_db"));
+            return 0;
+        }
+        if (name == null || name.isBlank()) {
+            String fn = selectedDb.getPath().getFileName().toString();
+            name = fn.endsWith(".zip") ? fn.substring(0, fn.length() - 4) : fn;
+        }
+        String safe = RegionManager.sanitizeName(name);
+
+        RegionTable table = RegionManager.getCurrentTable();
+        String regionName = RegionManager.getCurrentTableName();
+
+        JsonObject business = new JsonObject();
+        business.addProperty("database.file", selectedDb.getPath().getFileName().toString());
+        business.addProperty("region.name", regionName);
+        business.addProperty("region.count", table.size());
+
+        Path out = QAB_COMPOUND_DIR.resolve(safe + ".qcmp");
+        boolean overwrite = Files.exists(out);
+        try {
+            Files.createDirectories(QAB_COMPOUND_DIR);
+            try (ArchiveWriter writer = new ArchiveWriter(out)) {
+                writer.addStored(CompoundImage.DB_ENTRY, selectedDb.getPath());
+                writer.addBytes(CompoundImage.REGIONS_ENTRY,
+                        COMPOUND_GSON.toJson(table).getBytes(StandardCharsets.UTF_8));
+                writer.finish(business);
+            }
+        } catch (Exception e) {
+            LOGGER.error("Failed to save compound '{}': {}", out, e.getMessage());
+            ctx.getSource().sendError(Text.translatable("qab.msg.compound_io_error", e.getMessage()));
+            return 0;
+        }
+        ctx.getSource().sendFeedback(Text.translatable(overwrite
+                        ? "qab.msg.compound_saved_overwritten" : "qab.msg.compound_saved",
+                safe, out.toAbsolutePath().toString(), regionName, table.size()));
+        LOGGER.info("Saved compound {} (db={}, region={}, {} regions)",
+                out, selectedDb.getPath(), regionName, table.size());
+        return 1;
+    }
+
+    /**
+     * 解包复合包并供使用：DB 解到 {@code qab/compound/extracted/<名>/} 并设为选中，
+     * 分区表写回 region 目录并打开。
+     */
+    private static int execCompoundOpen(CommandContext<FabricClientCommandSource> ctx) {
+        String file = StringArgumentType.getString(ctx, "name");
+        Path target = CommandPathHelper.resolveFile(QAB_COMPOUND_DIR, file, ".qcmp");
+        if (target == null || !Files.exists(target)) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.compound_not_found",
+                    file, QAB_COMPOUND_DIR.toString()));
+            return 0;
+        }
+        try (CompoundImage img = CompoundImage.open(target)) {
+            ValidationResult result = img.validate();
+            printValidationIssues(ctx, result);
+            if (!result.valid()) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.compound_open_invalid",
+                        target.getFileName().toString()));
+                return 0;
+            }
+            // 1) 解出 DB，设为选中
+            Path extractDir = QAB_COMPOUND_DIR.resolve("extracted")
+                    .resolve(stripExtension(target.getFileName().toString()));
+            Files.createDirectories(extractDir);
+            Path dbZip = extractDir.resolve(CompoundImage.DB_ENTRY);
+            img.copyEntryTo(CompoundImage.DB_ENTRY, dbZip);
+            selectedDb = new CsQShopDbLoader(dbZip);
+            ValidationResult dbResult = selectedDb.validate();
+            if (!dbResult.valid()) {
+                printValidationIssues(ctx, dbResult);
+                selectedDb = null;
+                ctx.getSource().sendError(Text.translatable("qab.msg.compound_db_invalid",
+                        img.databaseFileName()));
+                return 0;
+            }
+            // 2) 解出分区表，写入 region 目录并打开
+            String regionName = img.regionName();
+            Path regionFile = RegionManager.regionDir()
+                    .resolve(RegionManager.sanitizeName(regionName) + ".json");
+            Files.createDirectories(RegionManager.regionDir());
+            img.copyEntryTo(CompoundImage.REGIONS_ENTRY, regionFile);
+            RegionManager.open(regionName);
+
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.compound_opened",
+                    target.getFileName().toString(), img.databaseFileName(), regionName,
+                    RegionManager.getCurrentTable().size(), target.toAbsolutePath().toString()));
+            LOGGER.info("Opened compound {} (db={}, region={})", target, dbZip, regionName);
+            return 1;
+        } catch (Exception e) {
+            LOGGER.error("Failed to open compound '{}': {}", target, e.getMessage());
+            ctx.getSource().sendError(Text.translatable("qab.msg.compound_io_error", e.getMessage()));
+            return 0;
+        }
+    }
+
+    /** 去掉文件名的扩展名（如 {@code a.qcmp -> a}）。 */
+    private static String stripExtension(String fileName) {
+        int dot = fileName.lastIndexOf('.');
+        return dot > 0 ? fileName.substring(0, dot) : fileName;
+    }
+
     // ---- help: 列出全部子命令与一句话用途 ----
     private static int execHelp(CommandContext<FabricClientCommandSource> ctx) {
         ctx.getSource().sendFeedback(Text.translatable("qab.help.header").formatted(Formatting.AQUA));
@@ -590,6 +726,8 @@ public class QabCommands {
                 "qab.help.region_selector",
                 "qab.help.region_remove",
                 "qab.help.region_list",
+                "qab.help.compound_save",
+                "qab.help.compound_open",
                 "qab.help.help",
         };
         for (String key : keys) {
