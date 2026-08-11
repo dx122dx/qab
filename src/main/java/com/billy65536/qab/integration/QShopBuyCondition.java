@@ -73,10 +73,14 @@ public final class QShopBuyCondition implements NavigationCondition {
     private volatile boolean arrived;
     /** 本目标是否已处理完毕（无论买没买成），供 {@link ShoppingRunner} 轮询。 */
     private volatile boolean resolved;
-    /** 本次实际购买的数量。 */
+    /** 本次实际购买的数量（容量预判值）。 */
     private volatile int boughtAmount;
     /** 本店还没买到的数量。 */
     private volatile int remainingAmount;
+    /** 下单前主背包内该物品的数量（快照）。 */
+    private volatile int beforeCount;
+    /** 结算时主背包内该物品的数量（快照）。 */
+    private volatile int afterCount;
     /** 未买完是否因为背包装不下（决定要不要触发存货）。 */
     private volatile boolean blockedByCapacity;
     /** 是否因为始终对不准/点不到而放弃（用于给玩家一条明确提示）。 */
@@ -131,7 +135,7 @@ public final class QShopBuyCondition implements NavigationCondition {
         return commandDelayTicks >= 0 && pendingCommand != null;
     }
 
-    /** 本次实际购买的数量。 */
+    /** 本次实际购买的数量（容量预判值）。 */
     public int getBoughtAmount() {
         return boughtAmount;
     }
@@ -139,6 +143,27 @@ public final class QShopBuyCondition implements NavigationCondition {
     /** 本店还没买到的数量。 */
     public int getRemainingAmount() {
         return remainingAmount;
+    }
+
+    /** 下单前主背包内该物品的数量（-1 表示物品 ID 无法解析，无法核对增量）。 */
+    public int getBeforeCount() {
+        return beforeCount;
+    }
+
+    /** 结算时主背包内该物品的数量（-1 表示物品 ID 无法解析，无法核对增量）。 */
+    public int getAfterCount() {
+        return afterCount;
+    }
+
+    /**
+     * 采样结算后的背包快照。
+     *
+     * <p>由 {@link ShoppingRunner} 在结算等待（{@code settleTicks}）结束后调用：
+     * 服务器发货需要时间，必须在命令发出后隔一段时间再读，才能看到真实到货量。</p>
+     */
+    public void refreshAfterCount(MinecraftClient client) {
+        if (client.player == null) return;
+        afterCount = InventoryCapacityCalculator.countItems(client.player, task.getItemId());
     }
 
     /** 未买完是否因为背包容量不足。 */
@@ -324,7 +349,9 @@ public final class QShopBuyCondition implements NavigationCondition {
             return;
         }
 
-        // 6) 执行购买（可能是部分购买）
+        // 6) 执行购买（可能是部分购买）。下单前先采样背包快照，
+        //    结算时用「after - before」核对真实到货量（服务器可能少发/拒发）。
+        beforeCount = InventoryCapacityCalculator.countItems(player, task.getItemId());
         boughtAmount = affordable;
         remainingAmount = wanted - affordable;
         blockedByCapacity = remainingAmount > 0;

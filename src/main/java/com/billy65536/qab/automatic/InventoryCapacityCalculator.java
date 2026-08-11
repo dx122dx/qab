@@ -125,4 +125,40 @@ public final class InventoryCapacityCalculator {
     public static boolean isMainInventoryFull(ClientPlayerEntity player) {
         return emptySlots(player) == 0;
     }
+
+    /**
+     * 统计主背包（slot 9..35）中指定物品的总数量。
+     *
+     * <p>用于自动购买结算后核对「背包确实增多了多少」。只统计主背包，
+     * 与容量预判口径一致（快捷栏不参与购买容量，也不参与库存核对）。</p>
+     *
+     * @param player 玩家
+     * @param item   目标物品
+     * @return 主背包内该物品的总个数（多堆相加）
+     */
+    public static int countItems(ClientPlayerEntity player, Item item) {
+        if (player == null || item == null) return 0;
+        PlayerInventory inv = player.getInventory();
+        int total = 0;
+        for (int i = MAIN_INV_START; i <= MAIN_INV_END; i++) {
+            ItemStack stack = inv.getStack(i);
+            if (stack.getItem() == item) {
+                total += stack.getCount();
+            }
+        }
+        return total;
+    }
+
+    /**
+     * 统计主背包中指定物品 ID 的总数量（按 ID 查找）。
+     *
+     * @param player 玩家
+     * @param itemId 物品 ID，形如 {@code minecraft:stone}
+     * @return 总个数；物品 ID 无法解析时返回 -1
+     */
+    public static int countItems(ClientPlayerEntity player, String itemId) {
+        Item item = resolveItem(itemId);
+        if (item == null) return -1;
+        return countItems(player, item);
+    }
 }

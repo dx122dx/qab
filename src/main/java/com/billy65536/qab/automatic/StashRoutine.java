@@ -215,6 +215,32 @@ public final class StashRoutine {
         if (result == null) result = Result.UNREACHABLE;
     }
 
+    /**
+     * 仅停掉导航（不清空状态机），供外部暂停/恢复使用。
+     *
+     * <p>与 {@link #abort()} 的区别：本方法只取消 Baritone 与队列，
+     * 保留 {@link #phase} / {@link #currentChest} 等进度，恢复后可从原处续上。</p>
+     */
+    public void abortNavigation() {
+        if (nav != null && nav.isActive()) {
+            nav.stop();
+        }
+    }
+
+    /**
+     * 暂停后恢复：仅当正在「前往存货点」且尚未到达时才需要重建导航。
+     * 已到达（OPENING / TRANSFERRING）的阶段不依赖导航，由 tick 直接续上。
+     */
+    public void resumeNavigation(MinecraftClient client) {
+        if (phase == Phase.NAVIGATING && currentChest != null) {
+            nav = StashNavHolder.get();
+            nav.clear();
+            nav.enqueue(currentChest.getX(), currentChest.getY(), currentChest.getZ(), currentDimension);
+            nav.start();
+            LOGGER.info("Stash navigation resumed to {}.", currentChest);
+        }
+    }
+
     // ==================== 各阶段 ====================
 
     private void tickNavigating(MinecraftClient client) {

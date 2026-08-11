@@ -3,6 +3,7 @@ package com.billy65536.qab;
 import com.billy65536.chunkscanner.api.DatabaseApi;
 import com.billy65536.infrastructure.util.archive.ValidationResult;
 import com.billy65536.qab.config.BlockMappingConfig;
+import com.billy65536.qab.automatic.ShoppingRunner;
 import com.billy65536.qab.config.QabConfig;
 import com.billy65536.qab.generator.ListGenConfig;
 import com.billy65536.qab.generator.SchematicListGenerator;
@@ -125,7 +126,9 @@ public class QabCommands {
                                     .suggests(PLAN_SUGGESTIONS)
                                     .executes(ctx -> execNavApply(ctx,
                                             StringArgumentType.getString(ctx, "file")))))
-                    .then(literal("stop").executes(QabCommands::execNavStop));
+                    .then(literal("stop").executes(QabCommands::execNavStop))
+                    .then(literal("pause").executes(QabCommands::execNavPause))
+                    .then(literal("resume").executes(QabCommands::execNavResume));
 
             // /qab stash add|remove|list —— 存货点管理（用当前站立坐标增删，免手写 JSON）
             var stash = literal("stash")
@@ -535,6 +538,35 @@ public class QabCommands {
         return 1;
     }
 
+    // ---- nav pause/resume: 冻结/恢复自动购买进度 ----
+    private static int execNavPause(CommandContext<FabricClientCommandSource> ctx) {
+        ShoppingRunner runner = ShoppingRunner.getInstance();
+        if (!runner.isRunning()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.nav_pause_idle"));
+            return 0;
+        }
+        if (!runner.pause()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.nav_already_paused"));
+            return 0;
+        }
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.nav_paused").formatted(Formatting.YELLOW));
+        return 1;
+    }
+
+    private static int execNavResume(CommandContext<FabricClientCommandSource> ctx) {
+        ShoppingRunner runner = ShoppingRunner.getInstance();
+        if (!runner.isRunning()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.nav_pause_idle"));
+            return 0;
+        }
+        if (!runner.resume()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.nav_already_resumed"));
+            return 0;
+        }
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.nav_resumed").formatted(Formatting.GREEN));
+        return 1;
+    }
+
     // ---- help: 列出全部子命令与一句话用途 ----
     private static int execHelp(CommandContext<FabricClientCommandSource> ctx) {
         ctx.getSource().sendFeedback(Text.translatable("qab.help.header").formatted(Formatting.AQUA));
@@ -544,6 +576,8 @@ public class QabCommands {
                 "qab.help.plan",
                 "qab.help.nav_apply",
                 "qab.help.nav_stop",
+                "qab.help.nav_pause",
+                "qab.help.nav_resume",
                 "qab.help.stash_add",
                 "qab.help.stash_list",
                 "qab.help.stash_remove",

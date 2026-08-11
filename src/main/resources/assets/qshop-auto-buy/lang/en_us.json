@@ -101,5 +101,12 @@
     "qab.help.region_selector": "  /qab region selector [on|off] - Toggle the region selector.",
     "qab.help.region_remove": "  /qab region remove <name> - Remove a region by name.",
     "qab.help.region_list": "  /qab region list - List all regions in the current table.",
+    "qab.msg.nav_paused": "Auto-buy navigation paused (progress kept).",
+    "qab.msg.nav_resumed": "Auto-buy navigation resumed.",
+    "qab.msg.nav_pause_idle": "No auto-buy run is currently active.",
+    "qab.msg.nav_already_paused": "Auto-buy navigation is already paused.",
+    "qab.msg.nav_already_resumed": "Auto-buy navigation is not paused.",
+    "qab.help.nav_pause": "  /qab nav pause - Pause auto-buy (freeze navigation & stash, keep progress).",
+    "qab.help.nav_resume": "  /qab nav resume - Resume a paused auto-buy run.",
     "qab.help.help": "  /qab help - Show this help."
 }

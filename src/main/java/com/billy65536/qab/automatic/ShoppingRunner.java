@@ -98,6 +98,14 @@ public final class ShoppingRunner {
      */
     private String awaitingDimension;
 
+    /**
+     * 玩家手动暂停开关。
+     *
+     * <p>暂停会冻结导航与存货子流程（保留全部进度），tick 停止推进；恢复时按所处阶段
+     * 重建导航或直接续上结算。</p>
+     */
+    private boolean paused;
+
     // ---- 统计 ----
     private int totalTasks;
     private int completedTasks;
@@ -162,11 +170,79 @@ public final class ShoppingRunner {
         currentTask = null;
         currentCondition = null;
         awaitingDimension = null;
+        paused = false;
         running = false;
     }
 
     public boolean isRunning() {
         return running;
+    }
+
+    /**
+     * 是否被玩家手动暂停。
+     *
+     * <p>区别于 {@link #isRunning()}：暂停时流程仍在运行（队列与进度都在），只是 tick 被冻结。</p>
+     */
+    public boolean isPaused() {
+        return paused;
+    }
+
+    /**
+     * 暂停自动购买：冻结导航与存货子流程，保留全部进度。
+     *
+     * @return true 表示本次确实执行了暂停；false 表示流程未运行或已处于暂停态
+     */
+    public boolean pause() {
+        if (!running) return false;
+        if (paused) return false;
+        paused = true;
+
+        if (stash != null) {
+            stash.abortNavigation();
+        }
+        ChunkScannerNavigation nav = CsNavigationHelper.navigationIfPresent();
+        if (nav != null && nav.isActive()) {
+            nav.stop();
+        }
+        LOGGER.info("Shopping runner paused.");
+        return true;
+    }
+
+    /**
+     * 恢复被暂停的自动购买。
+     *
+     * <p>已到店（对准/结算中）的任务不需要导航，直接继续；仍在赶路的任务重建导航；
+     * 存货子流程按其自身阶段恢复。</p>
+     *
+     * @return true 表示本次确实执行了恢复；false 表示流程未运行或未处于暂停态
+     */
+    public boolean resume() {
+        if (!running) return false;
+        if (!paused) return false;
+        paused = false;
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (stash != null) {
+            stash.resumeNavigation(client);
+        }
+        resumeCurrentNavigation(client);
+        LOGGER.info("Shopping runner resumed.");
+        return true;
+    }
+
+    /** 恢复当前任务的导航；已到店/已处理的任务不需要导航。 */
+    private void resumeCurrentNavigation(MinecraftClient client) {
+        if (currentTask == null || currentCondition == null) return;
+        if (currentCondition.isArrived() || currentCondition.isResolved()) return;
+
+        ChunkScannerNavigation nav = CsNavigationHelper.navigation();
+        nav.clear();
+        BlockPos pos = currentTask.getSignPos();
+        nav.enqueue(new NavigationEntry(currentTask.getDimensionId(),
+                        pos.getX(), pos.getY(), pos.getZ()), currentCondition);
+        nav.start();
+        navGrace = NAV_START_GRACE_TICKS;
+        LOGGER.info("Resumed navigation to {} ({}).", pos, currentTask.getItemId());
     }
 
     /** 剩余待办任务数（含当前正在执行的那个）。 */
@@ -184,7 +260,7 @@ public final class ShoppingRunner {
      * @param client 客户端
      */
     public void tick(MinecraftClient client) {
-        if (!running || client.player == null || client.world == null) return;
+        if (!running || paused || client.player == null || client.world == null) return;
 
         // 存货子流程优先：期间购买导航保持停止，避免抢占 Baritone
         if (stash != null) {
@@ -371,8 +447,21 @@ public final class ShoppingRunner {
             nav.stop();
         }
 
-        int bought = cond.getBoughtAmount();
+        int planned = cond.getBoughtAmount();
         int remaining = cond.getRemainingAmount();
+        // 权威成交数 = 背包实际增量（容量预判只是"预计能装多少"，QShop 可能少发/拒发）。
+        // 快照在前一 tick 下单时已采样，此刻结算等待已结束，读取发货后的真实数量。
+        cond.refreshAfterCount(client);
+        int before = cond.getBeforeCount();
+        int after = cond.getAfterCount();
+        int bought = planned;
+        if (before >= 0 && after >= 0) {
+            bought = Math.min(planned, Math.max(0, after - before));
+        }
+        if (bought < planned) {
+            LOGGER.warn("Actual delivery {} < planned {} at {} (inv {} -> {}), using actual.",
+                    bought, planned, task.getSignPos(), before, after);
+        }
         boughtItems += bought;
 
         if (cond.isAimFailed()) {
