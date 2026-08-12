@@ -7,6 +7,7 @@ import net.minecraft.block.enums.SlabType;
 import net.minecraft.state.property.Properties;
 import net.minecraft.state.property.Property;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -20,6 +21,9 @@ import java.util.Map;
  *   <li><b>门 / 床 / 高草的上半部</b> —— 与下半部同属<b>一个</b>物品，
  *       上半部必须跳过，否则数量会<b>翻倍</b></li>
  *   <li><b>流体</b> —— 只有源方块（{@code level=0}）能用桶装，流动的部分不需要买</li>
+ *   <li><b>含水方块</b> —— 当配置开关 {@code waterloggedCountsAsBucket} 开启时，
+ *       每个 {@code WATERLOGGED=true} 的方块额外计 1 水桶
+ *       （含水方块的水通常由建造时另行处理，默认不计；水方块本身仍按流体规则计桶）</li>
  * </ul>
  *
  * <h3>为什么优先读 {@link Properties} 常量而非状态字符串</h3>
@@ -34,14 +38,15 @@ public final class BlockStateRules {
     /**
      * 状态规则的判定结果。
      *
-     * @param skip       是否跳过该方块（不计入清单，也不计入「无法购买」）
-     * @param multiplier 数量倍数（如双台阶 = 2、雪层 = 层数）
-     * @param itemId     强制指定的物品 ID；为 null 表示交由常规映射链决定
+     * @param skip         是否跳过该方块（不计入清单，也不计入「无法购买」）
+     * @param multiplier   数量倍数（如双台阶 = 2、雪层 = 层数）
+     * @param itemId       强制指定的物品 ID；为 null 表示交由常规映射链决定
+     * @param extraItemIds 含水开关开启时额外计入的物品 ID（水桶）；为空表示无额外物品
      */
-    public record StateResult(boolean skip, int multiplier, String itemId) {
+    public record StateResult(boolean skip, int multiplier, String itemId, List<String> extraItemIds) {
 
-        private static final StateResult SKIP = new StateResult(true, 0, null);
-        private static final StateResult NORMAL = new StateResult(false, 1, null);
+        private static final StateResult SKIP = new StateResult(true, 0, null, List.of());
+        private static final StateResult NORMAL = new StateResult(false, 1, null, List.of());
 
         /** 跳过该方块。（不能命名为 skip，会与记录存取方法冲突） */
         public static StateResult skipped() {
@@ -55,12 +60,25 @@ public final class BlockStateRules {
 
         /** 常规物品，但数量为 n。 */
         public static StateResult times(int n) {
-            return n <= 1 ? NORMAL : new StateResult(false, n, null);
+            return n <= 1 ? NORMAL : new StateResult(false, n, null, List.of());
         }
 
         /** 指定物品，数量 1。 */
         public static StateResult item(String itemId) {
-            return new StateResult(false, 1, itemId);
+            return new StateResult(false, 1, itemId, List.of());
+        }
+
+        /** 常规处理，但额外计入若干物品（如含水方块的水桶）。 */
+        public static StateResult normalWithExtra(List<String> extraItemIds) {
+            return extraItemIds == null || extraItemIds.isEmpty()
+                    ? NORMAL
+                    : new StateResult(false, 1, null, extraItemIds);
+        }
+
+        /** 指定物品，同时额外计入若干物品（如含水方块的水桶）。 */
+        public static StateResult itemWithExtra(String itemId, List<String> extraItemIds) {
+            return new StateResult(false, 1, itemId,
+                    extraItemIds == null ? List.of() : extraItemIds);
         }
     }
 
@@ -70,15 +88,17 @@ public final class BlockStateRules {
     /**
      * 依据方块状态判定计数规则。
      *
-     * @param blockId 带命名空间的方块 ID
-     * @param state   还原出的方块状态；方块未注册时可为 null
-     * @param states  原理图原始状态串，作为 state 为 null 时的回退依据
+     * @param blockId                   带命名空间的方块 ID
+     * @param state                     还原出的方块状态；方块未注册时可为 null
+     * @param states                    原理图原始状态串，作为 state 为 null 时的回退依据
+     * @param waterloggedCountsAsBucket 含水方块（WATERLOGGED=true）是否额外计 1 水桶
      * @return 判定结果，永不为 null
      */
-    public static StateResult evaluate(String blockId, BlockState state, Map<String, String> states) {
+    public static StateResult evaluate(String blockId, BlockState state,
+                                       Map<String, String> states, boolean waterloggedCountsAsBucket) {
         if (state == null) {
             // 方块无法还原（跨版本或缺失模组），退化为字符串判断
-            return evaluateByStrings(states);
+            return evaluateByStrings(states, waterloggedCountsAsBucket);
         }
 
         // 1) 多格方块的「非主格」：与主格共用同一个物品，必须跳过以免翻倍。
@@ -120,13 +140,21 @@ public final class BlockStateRules {
             return StateResult.times(state.get(Properties.PICKLES));
         }
 
+        // 5) 含水方块：开关开启时额外计 1 水桶（本体方块仍正常计数）。
+        //    含水属性只在部分方块上存在（台阶/楼梯/栅栏门等），先确认再取值。
+        if (waterloggedCountsAsBucket
+                && has(state, Properties.WATERLOGGED)
+                && state.get(Properties.WATERLOGGED)) {
+            return StateResult.normalWithExtra(List.of("minecraft:water_bucket"));
+        }
+
         return StateResult.normal();
     }
 
     /**
      * 方块无法还原时的回退判断：只依据原始状态字符串，尽力避免最严重的重复计数。
      */
-    private static StateResult evaluateByStrings(Map<String, String> states) {
+    private static StateResult evaluateByStrings(Map<String, String> states, boolean waterloggedCountsAsBucket) {
         if (states == null || states.isEmpty()) {
             return StateResult.normal();
         }
@@ -145,6 +173,9 @@ public final class BlockStateRules {
         if (candles != null) return StateResult.times(candles);
         Integer pickles = parseInt(states.get("pickles"));
         if (pickles != null) return StateResult.times(pickles);
+        if (waterloggedCountsAsBucket && "true".equalsIgnoreCase(states.get("waterlogged"))) {
+            return StateResult.normalWithExtra(List.of("minecraft:water_bucket"));
+        }
         return StateResult.normal();
     }
 

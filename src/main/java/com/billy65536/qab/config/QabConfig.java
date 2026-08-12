@@ -1,31 +1,29 @@
 package com.billy65536.qab.config;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
-import net.fabricmc.loader.api.FabricLoader;
+import me.shedaniel.autoconfig.ConfigData;
+import me.shedaniel.autoconfig.annotation.Config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 /**
- * QAB 运行时配置（JSON：{gameDir}/config/qab/qab.json）。
+ * QAB 常规运行时配置（AutoConfig 驱动，JSON：{gameDir}/config/qab_config.json）。
  *
- * <p>仅包含 QAB 自身需要的可配置项，不依赖 chunkscanner 的配置类。</p>
+ * <p>仅包含 QAB 自身需要的可配置项，不依赖 chunkscanner 的配置类。
+ * 持久化与 GUI 由 AutoConfig 的 {@code GsonConfigSerializer} 接管，
+ * 经 infrastructure 的 {@code /inf config get|set|reset|gui qab:config/...} 读写。</p>
  *
  * <h3>购买相关</h3>
  * <ul>
  *   <li>{@code buyDelayMs}：到达告示牌后、发送购买命令前的等待毫秒数（默认 500）；</li>
  *   <li>{@code buyCommand}：到达后执行的购买命令模板，
  *       形如 {@code /qs amount {count}}，{@code {count}} 被替换为本次购买数量；</li>
-     *   <li>{@code clickReachDist}：判定"准星可点击到告示牌"的最大距离（默认 4.0 方块）。
-     *       默认 4.0 对应 MC 1.20.1 原版服务端方块交互距离上限约 4.5 格的安全余量；
-     *       部分服务器/模组会修改该上限，可按实际情况调大，不做硬上限限制；</li>
+ *   <li>{@code clickReachDist}：判定"准星可点击到告示牌"的最大距离（默认 4.0 方块）。
+ *       默认 4.0 对应 MC 1.20.1 原版服务端方块交互距离上限约 4.5 格的安全余量；
+ *       部分服务器/模组会修改该上限，可按实际情况调大，不做硬上限限制；</li>
  *   <li>{@code sightBlockedTimeoutTicks}：到店判定中视线被遮挡时的最大等待 tick 数（默认 60，
  *       超时后按"已到达"处理交由对准流程收尾，避免卡死）；</li>
  *   <li>{@code aimDegPerTick}：到店后转视角的每 tick 最大角度（默认 30°，值越小转头越"像人"）；</li>
@@ -45,16 +43,9 @@ import java.util.List;
  *   <li>{@code stashReserveSlots}：容量预判时额外预留的空格数（默认 1，给服务器可能的赠品/找零留余地）。</li>
  * </ul>
  */
-public final class QabConfig {
+@Config(name = "qab_config")
+public class QabConfig implements ConfigData {
     private static final Logger LOGGER = LoggerFactory.getLogger("qab.config");
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-
-    /** QAB 配置目录：{gameDir}/config/qab/。与 BlockMappingConfig 共用，作为单一路径来源。 */
-    public static final Path CONFIG_DIR = FabricLoader.getInstance().getGameDir()
-            .resolve("config").resolve("qab");
-
-    /** 配置文件路径。 */
-    public static final Path CONFIG_FILE = CONFIG_DIR.resolve("qab.json");
 
     private static final int DEFAULT_BUY_DELAY_MS = 500;
     private static final String DEFAULT_BUY_COMMAND = "/qs amount {count}";
@@ -86,69 +77,49 @@ public final class QabConfig {
     /** 预留格子数上限：主背包共 27 格，留满就没法买东西了。 */
     private static final int MAX_STASH_RESERVE_SLOTS = 26;
 
+    // ==================== 购买相关 ====================
+
     /** 到达后发送购买命令前的延时（毫秒）。 */
-    private int buyDelayMs = DEFAULT_BUY_DELAY_MS;
+    public int buyDelayMs = DEFAULT_BUY_DELAY_MS;
     /** 购买命令模板，{@code {count}} 占位符替换为本次购买数量。 */
-    private String buyCommand = DEFAULT_BUY_COMMAND;
+    public String buyCommand = DEFAULT_BUY_COMMAND;
     /** 准星可点击告示牌的最大距离（方块）。 */
-    private double clickReachDist = DEFAULT_CLICK_REACH_DIST;
+    public double clickReachDist = DEFAULT_CLICK_REACH_DIST;
     /** 到店判定中视线被遮挡时的最大等待 tick 数；超时后按"已到达"处理交由对准流程收尾。 */
-    private int sightBlockedTimeoutTicks = DEFAULT_SIGHT_BLOCKED_TIMEOUT_TICKS;
+    public int sightBlockedTimeoutTicks = DEFAULT_SIGHT_BLOCKED_TIMEOUT_TICKS;
     /** 到店后转视角的每 tick 最大角度（度）。 */
-    private float aimDegPerTick = DEFAULT_AIM_DEG_PER_TICK;
+    public float aimDegPerTick = DEFAULT_AIM_DEG_PER_TICK;
     /** 精确对准后、发起点击前的静置 tick 数。 */
-    private int aimSettleTicks = DEFAULT_AIM_SETTLE_TICKS;
+    public int aimSettleTicks = DEFAULT_AIM_SETTLE_TICKS;
+
+    // ==================== 存货（stash）相关 ====================
 
     /** 是否启用自动存货。 */
-    private boolean stashEnabled = DEFAULT_STASH_ENABLED;
+    public boolean stashEnabled = DEFAULT_STASH_ENABLED;
     /** 存货箱坐标列表，格式 {@code dimension(x,y,z)}，箱满时按顺序顺延。 */
-    private List<String> stashPositions = new ArrayList<>();
+    public List<String> stashPositions = new ArrayList<>();
     /** 存货时保留在背包中的物品 ID（不搬进箱子）。 */
-    private List<String> stashKeepItems = new ArrayList<>();
+    public List<String> stashKeepItems = new ArrayList<>();
     /** 每搬运一格之间的间隔 tick。 */
-    private int stashTransferDelayTicks = DEFAULT_STASH_TRANSFER_DELAY_TICKS;
+    public int stashTransferDelayTicks = DEFAULT_STASH_TRANSFER_DELAY_TICKS;
     /** 容量预判时额外预留的空格数。 */
-    private int stashReserveSlots = DEFAULT_STASH_RESERVE_SLOTS;
+    public int stashReserveSlots = DEFAULT_STASH_RESERVE_SLOTS;
+
+    // ==================== 区域相关 ====================
 
     /** 是否启用区域选择器（左/右键记录坐标）。 */
-    private boolean regionSelectorMode = DEFAULT_REGION_SELECTOR_MODE;
+    public boolean regionSelectorMode = DEFAULT_REGION_SELECTOR_MODE;
     /** 是否渲染区域高亮边框。 */
-    private boolean regionVisible = DEFAULT_REGION_VISIBLE;
-
-    private QabConfig() {
-    }
-
-    /**
-     * 从默认路径加载配置：{gameDir}/config/qab/qab.json。
-     * 文件不存在时使用默认值；解析失败回退默认值并告警。
-     *
-     * @return 加载后的配置（永不返回 null）
-     */
-    public static QabConfig load() {
-        QabConfig cfg = new QabConfig();
-        if (!Files.exists(CONFIG_FILE)) {
-            LOGGER.info("QAB config not found at {}, using defaults.", CONFIG_FILE);
-            return cfg;
-        }
-        try {
-            String json = Files.readString(CONFIG_FILE, StandardCharsets.UTF_8);
-            QabConfig parsed = GSON.fromJson(json, QabConfig.class);
-            if (parsed != null) {
-                parsed.sanitize();
-                cfg = parsed;
-            }
-        } catch (Exception e) {
-            LOGGER.warn("Failed to load QAB config from {}, using defaults: {}", CONFIG_FILE, e.getMessage());
-        }
-        return cfg;
-    }
+    public boolean regionVisible = DEFAULT_REGION_VISIBLE;
 
     /**
      * 修复反序列化后可能出现的非法值 / null 集合。
      *
-     * <p>Gson 不会调用构造函数，字段初始值不生效，集合字段可能为 null，必须在此兜底。</p>
+     * <p>AutoConfig 加载配置后回调；Gson 反序列化不经过字段初始值，
+     * 集合字段可能为 null，必须在此兜底。</p>
      */
-    private void sanitize() {
+    @Override
+    public void validatePostLoad() {
         if (buyDelayMs < 0) buyDelayMs = DEFAULT_BUY_DELAY_MS;
         if (buyCommand == null || buyCommand.isBlank()) buyCommand = DEFAULT_BUY_COMMAND;
         if (clickReachDist <= 0) clickReachDist = DEFAULT_CLICK_REACH_DIST;
@@ -197,23 +168,7 @@ public final class QabConfig {
         }
     }
 
-    /**
-     * 将当前配置写回 {@link #CONFIG_FILE}。
-     *
-     * <p>供 {@code /qab stash add|remove} 持久化点位改动。</p>
-     *
-     * @return 成功写入返回 true；失败返回 false 并记录日志
-     */
-    public boolean save() {
-        try {
-            Files.createDirectories(CONFIG_DIR);
-            Files.writeString(CONFIG_FILE, GSON.toJson(this), StandardCharsets.UTF_8);
-            return true;
-        } catch (Exception e) {
-            LOGGER.warn("Failed to save QAB config to {}: {}", CONFIG_FILE, e.getMessage());
-            return false;
-        }
-    }
+    // ---- getters ----
 
     public int getBuyDelayMs() {
         return buyDelayMs;
@@ -269,7 +224,7 @@ public final class QabConfig {
         return regionSelectorMode;
     }
 
-    /** 设置并持久化区域选择器开关。 */
+    /** 设置区域选择器开关（由命令 /qab region selector 调用）。 */
     public void setRegionSelectorMode(boolean regionSelectorMode) {
         this.regionSelectorMode = regionSelectorMode;
     }

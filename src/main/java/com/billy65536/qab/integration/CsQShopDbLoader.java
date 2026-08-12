@@ -74,7 +74,7 @@ public class CsQShopDbLoader {
      * <p>委托 {@link DbImage#validate()} 完成：字段合法性（analyzerId/databaseType 是否注册）
      * + 数据完整性（各文件 SHA-256 是否匹配）。
      *
-     * @return 校验结果，{@link DbValidationResult#valid()} 为 {@code true} 时方可安全加载
+     * @return 校验结果，{@link ValidationResult#valid()} 为 {@code true} 时方可安全加载
      */
     public ValidationResult validate() {
         return this.image.validate();

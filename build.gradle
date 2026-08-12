@@ -80,6 +80,11 @@ dependencies {
         changing = true
     }
 
+    // Cloth Config / AutoConfig — 必需依赖：配置模型由 AutoConfig 驱动持久化与 GUI
+    modImplementation("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
+        exclude(group: "net.fabricmc.fabric-api")
+    }
+
     // schematic4j — 解析 .litematic / .schem / .schematic 原理图，用于生成购物清单
     // 普通 Java 库（非 mod），需 include 打进最终 jar
     implementation "net.sandrohc:schematic4j:${project.schematic4j_version}"

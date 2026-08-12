@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.billy65536.qab.config.BlockMappingConfig;
+import com.billy65536.qab.config.ConfigLoader;
 
 /**
  * 将原理图中的<b>方块 ID</b> 解析为实际可购买的<b>物品 ID</b>。
@@ -89,6 +90,23 @@ public final class BlockItemResolver {
             }
             return new Resolved(map, unobtainable, skip);
         }
+
+        /**
+         * 额外计入若干物品（如含水方块的水桶）。
+         * 额外物品数量同样按倍数缩放（含水双台阶 = 2 格水 → 2 桶）。
+         */
+        Resolved withExtra(List<String> extraItemIds, int multiplier) {
+            if (skip || unobtainable || items.isEmpty()
+                    || extraItemIds == null || extraItemIds.isEmpty()) {
+                return this;
+            }
+            Map<String, Integer> map = new LinkedHashMap<>(items);
+            int count = Math.max(1, multiplier);
+            for (String id : extraItemIds) {
+                map.merge(id, count, Integer::sum);
+            }
+            return new Resolved(map, false, false);
+        }
     }
 
     /** 合并后的映射表（来自 BlockMappingConfig，reload 后刷新）。 */
@@ -107,7 +125,8 @@ public final class BlockItemResolver {
     }
 
     /**
-     * 由 {@link BlockMappingConfig#reload()} 在配置刷新后调用，使本类的静态缓存指向最新合并表。
+     * 由 {@link BlockMappingConfig#reloadFrom(com.billy65536.qab.config.SchematicConfig)} 在配置刷新后调用，
+     * 使本类的静态缓存指向最新合并表。
      */
     public static void refresh() {
         mappings = BlockMappingConfig.current();
@@ -143,8 +162,12 @@ public final class BlockItemResolver {
             return Resolved.none();
         }
 
+        // 现取含水开关（生成器为低频操作；配置变更后经 refresh() 清缓存生效）。
+        // 注意：开关值不参与缓存键，但 refresh() 会清空整张缓存表，改配置后重新解析即可。
+        boolean waterloggedAsBucket = ConfigLoader.getSchematicConfig().waterloggedCountsAsBucket;
+
         BlockState state = BlockStateResolver.resolve(id, states);
-        BlockStateRules.StateResult rule = BlockStateRules.evaluate(id, state, states);
+        BlockStateRules.StateResult rule = BlockStateRules.evaluate(id, state, states, waterloggedAsBucket);
 
         // 多格方块的非主格等：完全不参与统计
         if (rule.skip()) {
@@ -156,22 +179,24 @@ public final class BlockItemResolver {
         if (m.unobtainable().contains(id)) {
             return Resolved.none();
         }
+        Resolved base;
         String irregular = m.irregular().get(id);
         if (irregular != null) {
-            return Resolved.of(irregular).scaled(rule.multiplier());
+            base = Resolved.of(irregular).scaled(rule.multiplier());
+        } else {
+            List<String> composite = m.composite().get(id);
+            if (composite != null && composite.size() >= 2) {
+                base = Resolved.of(composite.get(0), composite.get(1)).scaled(rule.multiplier());
+            } else if (rule.itemId() != null) {
+                // 状态规则指定了具体物品（如水 → 水桶）
+                base = Resolved.of(rule.itemId()).scaled(rule.multiplier());
+            } else {
+                // 其余走常规映射链，最后套用状态倍数
+                base = resolve(id).scaled(rule.multiplier());
+            }
         }
-        List<String> composite = m.composite().get(id);
-        if (composite != null && composite.size() >= 2) {
-            return Resolved.of(composite.get(0), composite.get(1)).scaled(rule.multiplier());
-        }
-
-        // 状态规则指定了具体物品（如水 → 水桶）
-        if (rule.itemId() != null) {
-            return Resolved.of(rule.itemId()).scaled(rule.multiplier());
-        }
-
-        // 其余走常规映射链，最后套用状态倍数
-        return resolve(id).scaled(rule.multiplier());
+        // 含水方块额外计水桶（含水双台阶 = 2 格水 → 2 桶）
+        return base.withExtra(rule.extraItemIds(), rule.multiplier());
     }
 
     /**

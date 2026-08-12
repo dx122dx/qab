@@ -6,7 +6,10 @@ import net.minecraft.util.Identifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import net.fabricmc.loader.api.FabricLoader;
+
 import com.billy65536.qab.automatic.ShoppingRunner;
+import com.billy65536.qab.config.ConfigLoader;
 import com.billy65536.qab.planner.region.RegionHighlightRenderer;
 import com.billy65536.qab.planner.region.RegionSelector;
 
@@ -17,6 +20,9 @@ public class QShopAutoBuyMod implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         LOGGER.info("QShopAutoBuy mod initializing...");
+
+        // 注册 AutoConfig 两个配置段（qab:config / qab:schematic），必须在任何配置访问前调用
+        ConfigLoader.register();
 
         // 注册命令：/qab help、/qab select db|list、/qab plan、/qab nav apply|stop、
         //          /qab stash add|list|remove、/qab generate list、/qab region ...
@@ -42,5 +48,13 @@ public class QShopAutoBuyMod implements ClientModInitializer {
 
     public static Identifier id(String path) {
         return new Identifier(MOD_ID, path);
+    }
+
+    /** 返回本模组版本（来自 fabric.mod.json 元数据），供模块登记时上报。 */
+    public static String getVersion() {
+        return FabricLoader.getInstance()
+                .getModContainer(MOD_ID)
+                .map(c -> c.getMetadata().getVersion().getFriendlyString())
+                .orElse("?");
     }
 }

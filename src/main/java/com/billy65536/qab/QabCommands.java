@@ -5,6 +5,7 @@ import com.billy65536.infrastructure.util.archive.ArchiveWriter;
 import com.billy65536.infrastructure.util.archive.ValidationResult;
 import com.billy65536.qab.compound.CompoundImage;
 import com.billy65536.qab.config.BlockMappingConfig;
+import com.billy65536.qab.config.ConfigLoader;
 import com.billy65536.qab.automatic.ShoppingRunner;
 import com.billy65536.qab.config.QabConfig;
 import com.billy65536.qab.generator.ListGenConfig;
@@ -356,11 +357,9 @@ public class QabCommands {
             return 0;
         }
 
-        // 每次执行时实时加载方块→物品映射配置（config/qab/block-mapping.json）
-        boolean usedExternalMapping = BlockMappingConfig.reload();
-        ctx.getSource().sendFeedback(Text.translatable(
-                        usedExternalMapping ? "qab.msg.gen_list_mapping_custom" : "qab.msg.gen_list_mapping_default",
-                        BlockMappingConfig.MAPPING_FILE.toString())
+        // 每次执行时实时从 qab:schematic 段物化方块→物品映射（内置默认 + 用户覆盖）
+        BlockMappingConfig.reloadFrom(ConfigLoader.getSchematicConfig());
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.gen_list_mapping_refreshed")
                 .formatted(Formatting.GRAY));
 
         // file 逻辑与其他命令同：先在 schematics/ 下按扩展名查找，否则当全局路径
@@ -371,7 +370,7 @@ public class QabCommands {
             return 0;
         }
 
-        ListGenConfig config = ListGenConfig.parse(configStr);
+        ListGenConfig config = ListGenConfig.parse(configStr, ConfigLoader.getSchematicConfig());
         for (String warning : config.warnings) {
             ctx.getSource().sendError(Text.literal("  [W] " + warning).formatted(Formatting.YELLOW));
         }
@@ -393,8 +392,8 @@ public class QabCommands {
             return 0;
         }
 
-        String outName = config.outName != null && !config.outName.isBlank()
-                ? config.outName
+        String outName = config.outNameOrDefault() != null
+                ? config.outNameOrDefault()
                 : list.getName();
         outName = sanitizeFileName(outName);
         if (!outName.endsWith(".json")) {
@@ -534,7 +533,7 @@ public class QabCommands {
             return 0;
         }
 
-        QabConfig config = QabConfig.load();
+        QabConfig config = ConfigLoader.getConfig();
         int queued = CsNavigationHelper.applyPlan(plan, config);
         if (queued <= 0) {
             ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_no_target",
@@ -760,16 +759,12 @@ public class QabCommands {
         String position = CsNavigationHelper.formatPosition(
                 dimensionId, pos.getX(), pos.getY(), pos.getZ());
 
-        QabConfig config = QabConfig.load();
+        QabConfig config = ConfigLoader.getConfig();
         if (!config.addStashPosition(position)) {
             ctx.getSource().sendError(Text.translatable("qab.msg.stash_add_duplicate", position));
             return 0;
         }
-        if (!config.save()) {
-            ctx.getSource().sendError(Text.translatable("qab.msg.stash_save_failed",
-                    QabConfig.CONFIG_FILE.toString()));
-            return 0;
-        }
+        ConfigLoader.saveConfig();
 
         ctx.getSource().sendFeedback(Text.translatable("qab.msg.stash_add_done",
                 position, config.getStashPositions().size()).formatted(Formatting.GREEN));
@@ -778,7 +773,7 @@ public class QabCommands {
 
     // ---- stash list: 列出所有存货点 ----
     private static int execStashList(CommandContext<FabricClientCommandSource> ctx) {
-        QabConfig config = QabConfig.load();
+        QabConfig config = ConfigLoader.getConfig();
         List<String> positions = config.getStashPositions();
         if (positions.isEmpty()) {
             ctx.getSource().sendFeedback(Text.translatable("qab.msg.stash_list_empty")
@@ -797,7 +792,7 @@ public class QabCommands {
 
     // ---- stash remove: 按序号移除存货点 ----
     private static int execStashRemove(CommandContext<FabricClientCommandSource> ctx, int index) {
-        QabConfig config = QabConfig.load();
+        QabConfig config = ConfigLoader.getConfig();
         // 命令里的序号从 1 开始，与 /qab stash list 的显示一致
         String removed = config.removeStashPositionAt(index - 1);
         if (removed == null) {
@@ -805,11 +800,7 @@ public class QabCommands {
                     index, config.getStashPositions().size()));
             return 0;
         }
-        if (!config.save()) {
-            ctx.getSource().sendError(Text.translatable("qab.msg.stash_save_failed",
-                    QabConfig.CONFIG_FILE.toString()));
-            return 0;
-        }
+        ConfigLoader.saveConfig();
         ctx.getSource().sendFeedback(Text.translatable("qab.msg.stash_remove_done",
                 removed, config.getStashPositions().size()).formatted(Formatting.YELLOW));
         return 1;
@@ -865,10 +856,10 @@ public class QabCommands {
 
     // ---- region visible [on|off]: 切换区域高亮渲染 ----
     private static int execRegionVisible(CommandContext<FabricClientCommandSource> ctx, Boolean on) {
-        QabConfig config = QabConfig.load();
+        QabConfig config = ConfigLoader.getConfig();
         boolean next = (on == null) ? !config.isRegionVisible() : on;
         config.setRegionVisible(next);
-        config.save();
+        ConfigLoader.saveConfig();
         RegionHighlightRenderer.setVisible(next);
         ctx.getSource().sendFeedback(Text.translatable(
                 next ? "qab.msg.region_visible_on" : "qab.msg.region_visible_off")

@@ -10,6 +10,8 @@ import net.sandrohc.schematic4j.schematic.types.SchematicBlockEntity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.billy65536.qab.config.ConfigLoader;
+import com.billy65536.qab.config.SchematicConfig;
 import com.billy65536.qab.planner.model.ShoppingItem;
 import com.billy65536.qab.planner.model.ShoppingList;
 
@@ -216,8 +218,11 @@ public class SchematicListGenerator {
             if (config.rawIdOrDefault()) {
                 // 调试模式保留原始方块 ID，但仍需套用状态跳过规则，
                 // 否则门/床的上半部依旧会造成翻倍。
+                // 含水开关：rawId 模式仅取 multiplier/skip，额外水桶由常规解析链负责，
+                // 这里只关心跳过与倍数，含水方块的本体数量与额外水桶仍由 BlockItemResolver 计。
                 BlockStateRules.StateResult rule = BlockStateRules.evaluate(
-                        blockId, BlockStateResolver.resolve(blockId, states), states);
+                        blockId, BlockStateResolver.resolve(blockId, states), states,
+                        ConfigLoader.getSchematicConfig().waterloggedCountsAsBucket);
                 if (rule.skip()) {
                     stateSkipped++;
                     return;
@@ -285,7 +290,7 @@ public class SchematicListGenerator {
             items.add(new ShoppingItem(e.getKey(), count));
         }
 
-        Comparator<ShoppingItem> comparator = config.sortOrDefault() == ListGenConfig.SortMode.ID
+        Comparator<ShoppingItem> comparator = config.sortOrDefault() == SchematicConfig.SortMode.ID
                 ? Comparator.comparing(ShoppingItem::getId)
                 : Comparator.comparingInt(ShoppingItem::getCount).reversed()
                         .thenComparing(ShoppingItem::getId);
@@ -294,8 +299,9 @@ public class SchematicListGenerator {
     }
 
     private static String resolveName(Path path, Schematic schematic, ListGenConfig config) {
-        if (config.name != null && !config.name.isBlank()) {
-            return config.name;
+        String name = config.nameOrDefault();
+        if (name != null) {
+            return name;
         }
         String schematicName = schematic.name();
         if (schematicName != null && !schematicName.isBlank()) {
@@ -306,8 +312,9 @@ public class SchematicListGenerator {
 
     private static String resolveDescription(Path path, Schematic schematic, ListGenConfig config,
                                              int types, long total) {
-        if (config.description != null && !config.description.isBlank()) {
-            return config.description;
+        String description = config.descriptionOrDefault();
+        if (description != null) {
+            return description;
         }
         StringBuilder sb = new StringBuilder();
         sb.append("Generated from ").append(path.getFileName())

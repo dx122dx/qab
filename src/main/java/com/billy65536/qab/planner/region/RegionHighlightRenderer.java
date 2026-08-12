@@ -2,6 +2,7 @@ package com.billy65536.qab.planner.region;
 
 import com.billy65536.infrastructure.util.render.Box;
 import com.billy65536.infrastructure.util.render.BoxRenderer;
+import com.billy65536.qab.config.ConfigLoader;
 import com.billy65536.qab.config.QabConfig;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
@@ -36,7 +37,7 @@ public final class RegionHighlightRenderer {
 
     /** 注册世界渲染回调，并从配置初始化可见性。 */
     public static void initialize() {
-        visible = QabConfig.load().isRegionVisible();
+        visible = ConfigLoader.getConfig().isRegionVisible();
         WorldRenderEvents.LAST.register(RegionHighlightRenderer::doRender);
         LOGGER.info("Region highlight renderer initialized (visible={}).", visible);
     }

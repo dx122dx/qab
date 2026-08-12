@@ -1,14 +1,9 @@
 package com.billy65536.qab.config;
 
 import com.billy65536.qab.generator.BlockItemResolver;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,61 +11,53 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 方块→物品映射配置（JSON：{gameDir}/config/qab/block-mapping.json）。
+ * 方块→物品映射：内置默认表 + 用户覆盖的合并缓存（供 {@link BlockItemResolver} 读取）。
  *
- * <p>把 {@link BlockItemResolver} 中原本写死的三张表外置为可编辑配置文件：
+ * <p>把原本写死的三张表拆成"内置默认 + 用户差异"两层：
  * <ul>
  *   <li>{@code unobtainable} —— 无法购买的方块 ID 列表（流体、火、活塞头等）</li>
  *   <li>{@code irregular} —— 不规则单映射：{@code 方块ID: 物品ID}</li>
  *   <li>{@code composite} —— 组合方块：{@code 方块ID: [物品ID, 物品ID, ...]}</li>
  * </ul>
  *
- * <p><b>合并策略</b>：内置默认表（{@code DEFAULT_*}）作为出厂值；配置文件存在时，
+ * <p><b>合并策略</b>：内置默认表（{@code DEFAULT_*}）作为出厂值；用户差异写在
+ * {@code qab:schematic} 段（{@link SchematicConfig} 的三张表）：
  * {@code irregular}/{@code composite} 按 key 覆盖内置同名项并可追加新键，
- * {@code unobtainable} 取内置与配置的<b>并集</b>。配置文件缺某字段则该字段全用内置值。
- * 后缀规则与注册表兜底属于算法，仍保留在 {@link BlockItemResolver} 代码中。
+ * {@code unobtainable} 取内置与配置的<b>并集</b>。后缀规则与注册表兜底属于算法，
+ * 仍保留在 {@link BlockItemResolver} 代码中。
  *
- * <p><b>加载时机</b>：每次 {@code /qab generate list} 执行时调用 {@link #reload()}，
- * 实时刷新合并结果，改 JSON 无需重启游戏。文件不存在或解析失败时回退内置默认表并告警。
+ * <p><b>物化时机</b>：每次 {@code /qab generate list} 执行时调用
+ * {@link #reloadFrom(SchematicConfig)}，实时刷新合并结果，改配置无需重启游戏。
  */
 public final class BlockMappingConfig {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("qab/block-mapping");
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-
-    /** 配置文件路径：{gameDir}/config/qab/block-mapping.json。 */
-    public static final Path MAPPING_FILE = QabConfig.CONFIG_DIR.resolve("block-mapping.json");
 
     private BlockMappingConfig() {
     }
 
     /**
-     * 重新加载并合并配置。每次命令执行时调用。
-     * 任何异常都不会抛出，而是回退内置默认表并告警。
+     * 以内置默认为基础，用 schematic 段的用户差异表物化合并结果。
+     * 每次命令执行时调用。任何异常都不会抛出，而是回退内置默认表并告警。
      *
-     * @return true 表示使用了外部配置文件；false 表示回退到内置默认表
+     * @param cfg qab:schematic 段配置；null 时按全内置默认处理
      */
-    public static boolean reload() {
-        if (!Files.exists(MAPPING_FILE)) {
-            LOGGER.info("Block mapping file not found at {}, using built-in defaults.", MAPPING_FILE);
+    public static void reloadFrom(SchematicConfig cfg) {
+        if (cfg == null) {
             merged = buildDefault();
             BlockItemResolver.refresh();
-            return false;
+            LOGGER.info("Block mapping fallback to built-in defaults (schematic config is null).");
+            return;
         }
         try {
-            String json = Files.readString(MAPPING_FILE, StandardCharsets.UTF_8);
-            Raw raw = GSON.fromJson(json, Raw.class);
-            merged = raw == null ? buildDefault() : merge(raw);
+            merged = merge(cfg);
             BlockItemResolver.refresh();
-            LOGGER.info("Block mapping loaded: {} unobtainable, {} irregular, {} composite.",
+            LOGGER.info("Block mapping refreshed: {} unobtainable, {} irregular, {} composite.",
                     merged.unobtainable().size(), merged.irregular().size(), merged.composite().size());
-            return true;
         } catch (Exception e) {
-            LOGGER.warn("Failed to load block mapping from {}, using built-in defaults: {}",
-                    MAPPING_FILE, e.getMessage());
+            LOGGER.warn("Failed to merge block mapping, using built-in defaults: {}", e.getMessage());
             merged = buildDefault();
             BlockItemResolver.refresh();
-            return false;
         }
     }
 
@@ -83,13 +70,6 @@ public final class BlockMappingConfig {
     public record Merged(Set<String> unobtainable,
                   Map<String, String> irregular,
                   Map<String, List<String>> composite) {
-    }
-
-    /** JSON 反序列化结构（允许字段缺失）。 */
-    private static final class Raw {
-        List<String> unobtainable;
-        Map<String, String> irregular;
-        Map<String, List<String>> composite;
     }
 
     // ---- 内置默认表（原 BlockItemResolver 中的三张表，作为出厂值） ----
@@ -136,7 +116,7 @@ public final class BlockMappingConfig {
     );
 
     /**
-     * 合并后的当前生效表，reload() 后刷新。volatile 保证命令线程可见性。
+     * 合并后的当前生效表，reloadFrom() 后刷新。volatile 保证命令线程可见性。
      *
      * <p><b>声明位置不可上移</b>：静态字段初始化按源码顺序执行，此处必须位于
      * {@code DEFAULT_*} 三张表之后，否则 {@link #buildDefault()} 读到的是 null，
@@ -153,13 +133,12 @@ public final class BlockMappingConfig {
         );
     }
 
-    /** 内置默认表 + 配置文件覆盖/追加。 */
-    private static Merged merge(Raw raw) {
-        // JSON 中允许出现 null 元素/值（如 ["a", null]），需逐项过滤，
-        // 否则 addAll/putAll 会把 null 带入表中，导致解析时出现意外行为。
+    /** 内置默认表 + schematic 段用户表覆盖/追加。 */
+    private static Merged merge(SchematicConfig cfg) {
+        // schematic 段经 validatePostLoad 清理，但防御性剔除 null/空白项。
         Set<String> unobtainable = new HashSet<>(DEFAULT_UNOBTAINABLE);
-        if (raw.unobtainable != null) {
-            for (String id : raw.unobtainable) {
+        if (cfg.unobtainable != null) {
+            for (String id : cfg.unobtainable) {
                 if (id != null && !id.isBlank()) {
                     unobtainable.add(id);
                 }
@@ -167,8 +146,8 @@ public final class BlockMappingConfig {
         }
 
         Map<String, String> irregular = new LinkedHashMap<>(DEFAULT_IRREGULAR);
-        if (raw.irregular != null) {
-            raw.irregular.forEach((k, v) -> {
+        if (cfg.irregular != null) {
+            cfg.irregular.forEach((k, v) -> {
                 if (k != null && v != null && !k.isBlank() && !v.isBlank()) {
                     irregular.put(k, v);
                 }
@@ -176,8 +155,8 @@ public final class BlockMappingConfig {
         }
 
         Map<String, List<String>> composite = new LinkedHashMap<>(DEFAULT_COMPOSITE);
-        if (raw.composite != null) {
-            raw.composite.forEach((k, v) -> {
+        if (cfg.composite != null) {
+            cfg.composite.forEach((k, v) -> {
                 if (k != null && !k.isBlank() && v != null && v.size() >= 2
                         && v.get(0) != null && v.get(1) != null) {
                     composite.put(k, v);

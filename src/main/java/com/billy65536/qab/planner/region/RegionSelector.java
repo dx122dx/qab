@@ -1,5 +1,6 @@
 package com.billy65536.qab.planner.region;
 
+import com.billy65536.qab.config.ConfigLoader;
 import com.billy65536.qab.config.QabConfig;
 import com.billy65536.qab.integration.CsNavigationHelper;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -45,7 +46,7 @@ public final class RegionSelector {
 
     /** 注册客户端 tick 回调；启动时从配置恢复选择器开关。 */
     public static void register() {
-        enabled = QabConfig.load().isRegionSelectorMode();
+        enabled = ConfigLoader.getConfig().isRegionSelectorMode();
         ClientTickEvents.END_CLIENT_TICK.register(RegionSelector::onTick);
         LOGGER.info("Region selector registered (enabled={}).", enabled);
     }
@@ -53,9 +54,9 @@ public final class RegionSelector {
     /** 设置选择器开关并持久化到配置；关闭时清空临时状态。 */
     public static void setEnabled(boolean on) {
         enabled = on;
-        QabConfig config = QabConfig.load();
+        QabConfig config = ConfigLoader.getConfig();
         config.setRegionSelectorMode(on);
-        config.save();
+        ConfigLoader.saveConfig();
         if (!on) {
             pendingName = null;
             corner1 = null;

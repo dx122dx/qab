@@ -1,5 +1,6 @@
 package com.billy65536.qab.generator;
 
+import com.billy65536.qab.config.SchematicConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,19 +36,14 @@ import java.util.Locale;
  *   <li>{@code sort} —— 排序方式：{@code count}（数量降序，默认）/ {@code id}（ID 升序）</li>
  * </ul>
  *
+ * <p>命令行未指定的键取 {@code qab:schematic} 段配置的默认值（由
+ * {@link #parse(String, SchematicConfig)} 传入），命令行仍可覆盖。
+ *
  * <p>示例：{@code name=我的房子 redundancy=64 multiplier=2 exclude=air,*_sign sort=id}
  */
 public class ListGenConfig {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("qab/list-gen-config");
-
-    /** 排序方式。 */
-    public enum SortMode {
-        /** 按数量降序。 */
-        COUNT,
-        /** 按物品 ID 升序。 */
-        ID
-    }
 
     /** 清单名称。null = 使用原理图文件名。 */
     public String name;
@@ -82,11 +78,14 @@ public class ListGenConfig {
     /** 排除的方块 ID 模式列表。空表示不排除。 */
     public final List<String> excludes = new ArrayList<>();
 
-    /** 排序方式。null = COUNT。 */
-    public SortMode sort;
+    /** 排序方式。null = COUNT（枚举见 {@link SchematicConfig.SortMode}）。 */
+    public SchematicConfig.SortMode sort;
 
     /** 解析过程中产生的告警，供命令层回显给玩家。 */
     public final List<String> warnings = new ArrayList<>();
+
+    /** qab:schematic 段配置（命令未指定键的默认值来源）。 */
+    private SchematicConfig defaults;
 
     /** 创建一个空配置（全部使用默认值）。 */
     public ListGenConfig() {}
@@ -94,11 +93,16 @@ public class ListGenConfig {
     /**
      * 从 {@code key=value} 字符串解析配置。
      *
+     * <p>命令行未指定的键（null）取 {@code qab:schematic} 段配置的默认值；
+     * effective getters（{@code *OrDefault}）据此计算最终生效值。
+     *
      * @param configStr 空格分隔的 key=value 串，可为 null 或空
+     * @param defaults  qab:schematic 段配置；可为 null（此时回退硬编码默认值）
      * @return 解析结果，永不为 null（空输入返回全默认配置）
      */
-    public static ListGenConfig parse(String configStr) {
+    public static ListGenConfig parse(String configStr, SchematicConfig defaults) {
         ListGenConfig config = new ListGenConfig();
+        config.defaults = defaults;
         if (configStr == null || configStr.isBlank()) {
             return config;
         }
@@ -181,47 +185,86 @@ public class ListGenConfig {
         };
     }
 
-    private static SortMode parseSort(String value) {
+    private static SchematicConfig.SortMode parseSort(String value) {
         String v = value.toLowerCase(Locale.ROOT);
         return switch (v) {
-            case "count", "amount" -> SortMode.COUNT;
-            case "id", "name", "alpha" -> SortMode.ID;
+            case "count", "amount" -> SchematicConfig.SortMode.COUNT;
+            case "id", "name", "alpha" -> SchematicConfig.SortMode.ID;
             default -> throw new IllegalArgumentException("Invalid sort mode: " + value + " (expected count|id)");
         };
     }
 
-    // ---- effective getters（应用默认值） ----
+    // ---- effective getters（命令行优先，其次 schematic 段默认值，最后硬编码常量） ----
+
+    /** 清单名称。null 表示未指定且 schematic 段也无默认值（使用原理图文件名）。 */
+    public String nameOrDefault() {
+        if (name != null && !name.isBlank()) return name;
+        if (defaults != null && defaults.name != null && !defaults.name.isBlank()) return defaults.name;
+        return null;
+    }
+
+    /** 清单描述。null 表示未指定且 schematic 段也无默认值（自动生成）。 */
+    public String descriptionOrDefault() {
+        if (description != null && !description.isBlank()) return description;
+        if (defaults != null && defaults.description != null && !defaults.description.isBlank()) {
+            return defaults.description;
+        }
+        return null;
+    }
+
+    /** 输出文件名。null 表示未指定且 schematic 段也无默认值（与名称相同）。 */
+    public String outNameOrDefault() {
+        if (outName != null && !outName.isBlank()) return outName;
+        if (defaults != null && defaults.outName != null && !defaults.outName.isBlank()) return defaults.outName;
+        return null;
+    }
 
     public int redundancyOrDefault() {
-        return redundancy == null ? 0 : redundancy;
+        if (redundancy != null) return redundancy;
+        if (defaults != null && defaults.redundancy != null) return defaults.redundancy;
+        return 0;
     }
 
     public double multiplierOrDefault() {
-        return multiplier == null ? 1.0 : multiplier;
+        if (multiplier != null) return multiplier;
+        if (defaults != null && defaults.multiplier != null) return defaults.multiplier;
+        return 1.0;
     }
 
     public int minCountOrDefault() {
-        return minCount == null ? 0 : minCount;
+        if (minCount != null) return minCount;
+        if (defaults != null && defaults.minCount != null) return defaults.minCount;
+        return 0;
     }
 
     public int thresholdOrDefault() {
-        return threshold == null ? 1 : threshold;
+        if (threshold != null) return threshold;
+        if (defaults != null && defaults.threshold != null) return defaults.threshold;
+        return 1;
     }
 
     public boolean includeBlockEntitiesOrDefault() {
-        return includeBlockEntities != null && includeBlockEntities;
+        if (includeBlockEntities != null) return includeBlockEntities;
+        if (defaults != null && defaults.includeBlockEntities != null) return defaults.includeBlockEntities;
+        return false;
     }
 
     public boolean deductInventoryOrDefault() {
-        return deductInventory != null && deductInventory;
+        if (deductInventory != null) return deductInventory;
+        if (defaults != null && defaults.deductInventory != null) return defaults.deductInventory;
+        return false;
     }
 
     public boolean rawIdOrDefault() {
-        return rawId != null && rawId;
+        if (rawId != null) return rawId;
+        if (defaults != null && defaults.rawId != null) return defaults.rawId;
+        return false;
     }
 
-    public SortMode sortOrDefault() {
-        return sort == null ? SortMode.COUNT : sort;
+    public SchematicConfig.SortMode sortOrDefault() {
+        if (sort != null) return sort;
+        if (defaults != null && defaults.sort != null) return defaults.sort;
+        return SchematicConfig.SortMode.COUNT;
     }
 
     /** 生成配置说明字符串（紧凑单行，用于聊天消息）。 */
