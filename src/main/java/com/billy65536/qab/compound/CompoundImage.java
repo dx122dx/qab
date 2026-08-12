@@ -17,9 +17,11 @@ import java.util.Set;
  *   <li>{@code regions.json} —— 打包时刻分区表的 Gson 序列化。</li>
  * </ul>
  *
- * <p>业务元数据记录在框架元数据段的 {@code business} 里：
- * {@code database.file}（原始 DB 文件名）、{@code region.name}（分区表名）、
- * {@code region.count}（打包时刻区域数）。</p>
+ * <p>业务元数据记录在框架元数据段的 {@code business} 里（统一小写驼峰）：
+ * {@code databaseFile}（原始 DB 文件名）、{@code regionName}（分区表名）、
+ * {@code regionCount}（打包时刻区域数）；归档类型标识为 {@code qab:compound}。</p>
+ *
+ * <p>读取侧兼容旧版点分 key（{@code database.file} / {@code region.name}）回落，老包仍可打开。</p>
  *
  * <p>打开流程：{@link #open(Path)} 先经 ZIP 注释定位并解析框架元数据，随后调用方
  * {@link #validate()} 做完整性与业务校验，通过后用 {@code copyEntryTo} 将 DB / 分区表
@@ -47,29 +49,44 @@ public final class CompoundImage extends ArchiveImage implements AutoCloseable {
         return new CompoundImage(zipPath, readMetadata(zipPath));
     }
 
+    /** 归档业务类型标识（写入归档元数据 business.type）。 */
+    public static final String ARCHIVE_TYPE = "qab:compound";
+
     /** 复合包必须同时包含 DB 与分区表两个 entry。 */
     @Override
     protected Set<String> requiredEntries() {
         return Set.of(DB_ENTRY, REGIONS_ENTRY);
     }
 
-    /** 业务校验：复合包无必填业务字段；仅当 business 缺 {@code region.name} 时告警。 */
+    @Override
+    protected String expectedArchiveType() {
+        return ARCHIVE_TYPE;
+    }
+
+    /** 业务校验：复合包无必填业务字段；仅当 business 缺 {@code regionName} 时告警。 */
     @Override
     protected void validateBusinessFields(List<String> errors, List<String> warnings) {
-        if (!metadata().businessOrEmpty().has("region.name")) {
-            warnings.add("Missing business 'region.name'; will default to 'default' when opened.");
+        var business = metadata().businessOrEmpty();
+        if (!business.has("regionName") && !business.has("region.name")) {
+            warnings.add("Missing business 'regionName'; will default to 'default' when opened.");
         }
     }
 
     /** 解包时的分区表名（business 未记录时回落为 {@code default}）。 */
     public String regionName() {
         var business = metadata().businessOrEmpty();
+        if (business.has("regionName")) {
+            return business.get("regionName").getAsString();
+        }
         return business.has("region.name") ? business.get("region.name").getAsString() : "default";
     }
 
     /** 打包时 DB 的原始文件名（business 未记录时回落为 entry 名）。 */
     public String databaseFileName() {
         var business = metadata().businessOrEmpty();
+        if (business.has("databaseFile")) {
+            return business.get("databaseFile").getAsString();
+        }
         return business.has("database.file") ? business.get("database.file").getAsString() : DB_ENTRY;
     }
 

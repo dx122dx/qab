@@ -614,9 +614,9 @@ public class QabCommands {
         String regionName = RegionManager.getCurrentTableName();
 
         JsonObject business = new JsonObject();
-        business.addProperty("database.file", selectedDb.getPath().getFileName().toString());
-        business.addProperty("region.name", regionName);
-        business.addProperty("region.count", table.size());
+        business.addProperty("databaseFile", selectedDb.getPath().getFileName().toString());
+        business.addProperty("regionName", regionName);
+        business.addProperty("regionCount", table.size());
 
         Path out = QAB_COMPOUND_DIR.resolve(safe + ".qcmp");
         boolean overwrite = Files.exists(out);
@@ -626,7 +626,8 @@ public class QabCommands {
                 writer.addStored(CompoundImage.DB_ENTRY, selectedDb.getPath());
                 writer.addBytes(CompoundImage.REGIONS_ENTRY,
                         COMPOUND_GSON.toJson(table).getBytes(StandardCharsets.UTF_8));
-                writer.finish(business);
+                // 归档类型 qab:compound 由框架强制写入 business.type
+                writer.finish(CompoundImage.ARCHIVE_TYPE, business);
             }
         } catch (Exception e) {
             LOGGER.error("Failed to save compound '{}': {}", out, e.getMessage());
