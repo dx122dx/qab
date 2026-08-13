@@ -2,8 +2,6 @@ package com.billy65536.qab.config;
 
 import me.shedaniel.autoconfig.ConfigData;
 import me.shedaniel.autoconfig.annotation.Config;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -15,6 +13,16 @@ import java.util.List;
  * <p>仅包含 QAB 自身需要的可配置项，不依赖 chunkscanner 的配置类。
  * 持久化与 GUI 由 AutoConfig 的 {@code GsonConfigSerializer} 接管，
  * 经 infrastructure 的 {@code /inf config get|set|reset|gui qab:config/...} 读写。</p>
+ *
+ * <p><b>注意：本类内严禁声明任何 static 字段（包括 static final 常量与 Logger）。</b>
+ * AutoConfig 的 GUI 反射收集配置字段时会把 static 字段纳入索引，导致保存时字段错位、
+ * 尝试写入 {@code static final} 字段而抛 {@code IllegalAccessException}（表现为
+ * 「配置编辑窗口输入数据后保存崩溃」）。因此：</p>
+ * <ul>
+ *   <li>默认值<b>直接以内联字面量写在实例字段初始化器</b>里（实例字段本就是配置项，安全）；</li>
+ *   <li>上下限等校验常量<b>内联于 {@link #validatePostLoad()}</b> 并配注释，不能做成实例字段
+ *       （否则会被当成配置项显示在 GUI / 写入 JSON），也不能做成 static 字段。</li>
+ * </ul>
  *
  * <h3>购买相关</h3>
  * <ul>
@@ -45,99 +53,66 @@ import java.util.List;
  */
 @Config(name = "qab_config")
 public class QabConfig implements ConfigData {
-    private static final Logger LOGGER = LoggerFactory.getLogger("qab.config");
-
-    private static final int DEFAULT_BUY_DELAY_MS = 500;
-    private static final String DEFAULT_BUY_COMMAND = "/qs amount {count}";
-    private static final double DEFAULT_CLICK_REACH_DIST = 4.0;
-    private static final float DEFAULT_AIM_DEG_PER_TICK = 30.0F;
-    private static final int DEFAULT_AIM_SETTLE_TICKS = 2;
-    private static final int DEFAULT_SIGHT_BLOCKED_TIMEOUT_TICKS = 60;
-    /** 视线被挡超时下限：太小会在绕路途中经过牌子附近时误判到达。 */
-    private static final int MIN_SIGHT_BLOCKED_TIMEOUT_TICKS = 20;
-
-    /** 转头速度下限：太小会让对准迟迟完不成，触发超时放弃。 */
-    private static final float MIN_AIM_DEG_PER_TICK = 5.0F;
-    /** 转头速度上限：180°/tick 等价于瞬间对准。 */
-    private static final float MAX_AIM_DEG_PER_TICK = 180.0F;
-    /** 静置 tick 上限：再久也没有意义，只会拖慢购买。 */
-    private static final int MAX_AIM_SETTLE_TICKS = 40;
-
-    private static final boolean DEFAULT_STASH_ENABLED = true;
-    private static final int DEFAULT_STASH_TRANSFER_DELAY_TICKS = 2;
-    private static final int DEFAULT_STASH_RESERVE_SLOTS = 1;
-
-    /** 是否启用区域选择器（左/右键记录坐标，由命令 /qab region selector 切换）。 */
-    private static final boolean DEFAULT_REGION_SELECTOR_MODE = false;
-    /** 是否渲染区域高亮边框（由命令 /qab region visible 切换）。 */
-    private static final boolean DEFAULT_REGION_VISIBLE = true;
-
-    /** 搬运间隔上限，避免用户填个巨大值让存货永远跑不完。 */
-    private static final int MAX_STASH_TRANSFER_DELAY_TICKS = 100;
-    /** 预留格子数上限：主背包共 27 格，留满就没法买东西了。 */
-    private static final int MAX_STASH_RESERVE_SLOTS = 26;
-
     // ==================== 购买相关 ====================
 
     /** 到达后发送购买命令前的延时（毫秒）。 */
-    public int buyDelayMs = DEFAULT_BUY_DELAY_MS;
+    public int buyDelayMs = 500;
     /** 购买命令模板，{@code {count}} 占位符替换为本次购买数量。 */
-    public String buyCommand = DEFAULT_BUY_COMMAND;
+    public String buyCommand = "/qs amount {count}";
     /** 准星可点击告示牌的最大距离（方块）。 */
-    public double clickReachDist = DEFAULT_CLICK_REACH_DIST;
+    public double clickReachDist = 4.0;
     /** 到店判定中视线被遮挡时的最大等待 tick 数；超时后按"已到达"处理交由对准流程收尾。 */
-    public int sightBlockedTimeoutTicks = DEFAULT_SIGHT_BLOCKED_TIMEOUT_TICKS;
+    public int sightBlockedTimeoutTicks = 60;
     /** 到店后转视角的每 tick 最大角度（度）。 */
-    public float aimDegPerTick = DEFAULT_AIM_DEG_PER_TICK;
+    public float aimDegPerTick = 30.0F;
     /** 精确对准后、发起点击前的静置 tick 数。 */
-    public int aimSettleTicks = DEFAULT_AIM_SETTLE_TICKS;
+    public int aimSettleTicks = 2;
 
     // ==================== 存货（stash）相关 ====================
 
     /** 是否启用自动存货。 */
-    public boolean stashEnabled = DEFAULT_STASH_ENABLED;
+    public boolean stashEnabled = true;
     /** 存货箱坐标列表，格式 {@code dimension(x,y,z)}，箱满时按顺序顺延。 */
     public List<String> stashPositions = new ArrayList<>();
     /** 存货时保留在背包中的物品 ID（不搬进箱子）。 */
     public List<String> stashKeepItems = new ArrayList<>();
     /** 每搬运一格之间的间隔 tick。 */
-    public int stashTransferDelayTicks = DEFAULT_STASH_TRANSFER_DELAY_TICKS;
+    public int stashTransferDelayTicks = 2;
     /** 容量预判时额外预留的空格数。 */
-    public int stashReserveSlots = DEFAULT_STASH_RESERVE_SLOTS;
+    public int stashReserveSlots = 1;
 
     // ==================== 区域相关 ====================
 
     /** 是否启用区域选择器（左/右键记录坐标）。 */
-    public boolean regionSelectorMode = DEFAULT_REGION_SELECTOR_MODE;
+    public boolean regionSelectorMode = false;
     /** 是否渲染区域高亮边框。 */
-    public boolean regionVisible = DEFAULT_REGION_VISIBLE;
+    public boolean regionVisible = true;
 
     /**
      * 修复反序列化后可能出现的非法值 / null 集合。
      *
      * <p>AutoConfig 加载配置后回调；Gson 反序列化不经过字段初始值，
-     * 集合字段可能为 null，必须在此兜底。</p>
+     * 集合字段可能为 null，必须在此兜底。校验上下限以内联字面量写出（见类 javadoc）。</p>
      */
     @Override
     public void validatePostLoad() {
-        if (buyDelayMs < 0) buyDelayMs = DEFAULT_BUY_DELAY_MS;
-        if (buyCommand == null || buyCommand.isBlank()) buyCommand = DEFAULT_BUY_COMMAND;
-        if (clickReachDist <= 0) clickReachDist = DEFAULT_CLICK_REACH_DIST;
-        if (sightBlockedTimeoutTicks < MIN_SIGHT_BLOCKED_TIMEOUT_TICKS) {
-            sightBlockedTimeoutTicks = MIN_SIGHT_BLOCKED_TIMEOUT_TICKS;
-        }
+        if (buyDelayMs < 0) buyDelayMs = 500;
+        if (buyCommand == null || buyCommand.isBlank()) buyCommand = "/qs amount {count}";
+        if (clickReachDist <= 0) clickReachDist = 4.0;
+        // 视线被挡超时下限 20：太小会在绕路途中经过牌子附近时误判到达。
+        if (sightBlockedTimeoutTicks < 20) sightBlockedTimeoutTicks = 60;
 
-        if (aimDegPerTick < MIN_AIM_DEG_PER_TICK) {
-            aimDegPerTick = aimDegPerTick <= 0 ? DEFAULT_AIM_DEG_PER_TICK : MIN_AIM_DEG_PER_TICK;
-        } else if (aimDegPerTick > MAX_AIM_DEG_PER_TICK) {
-            aimDegPerTick = MAX_AIM_DEG_PER_TICK;
+        // 转头速度范围 [5, 180]°/tick：过小对准迟迟完不成触发超时放弃，180 等价瞬间对准。
+        if (aimDegPerTick < 5) {
+            aimDegPerTick = aimDegPerTick <= 0 ? 30 : 5;
+        } else if (aimDegPerTick > 180) {
+            aimDegPerTick = 180;
         }
+        // 静置 tick 上限 40：再久没有意义，只会拖慢购买。
         if (aimSettleTicks < 0) {
-            aimSettleTicks = DEFAULT_AIM_SETTLE_TICKS;
-        } else if (aimSettleTicks > MAX_AIM_SETTLE_TICKS) {
-            LOGGER.warn("aimSettleTicks={} too large, clamped to {}.",
-                    aimSettleTicks, MAX_AIM_SETTLE_TICKS);
-            aimSettleTicks = MAX_AIM_SETTLE_TICKS;
+            aimSettleTicks = 2;
+        } else if (aimSettleTicks > 40) {
+            aimSettleTicks = 40;
         }
 
         if (stashPositions == null) {
@@ -151,20 +126,18 @@ public class QabConfig implements ConfigData {
             stashKeepItems.removeIf(s -> s == null || s.isBlank());
         }
 
+        // 搬运间隔上限 100：避免用户填个巨大值让存货永远跑不完。
         if (stashTransferDelayTicks < 0) {
-            stashTransferDelayTicks = DEFAULT_STASH_TRANSFER_DELAY_TICKS;
-        } else if (stashTransferDelayTicks > MAX_STASH_TRANSFER_DELAY_TICKS) {
-            LOGGER.warn("stashTransferDelayTicks={} too large, clamped to {}.",
-                    stashTransferDelayTicks, MAX_STASH_TRANSFER_DELAY_TICKS);
-            stashTransferDelayTicks = MAX_STASH_TRANSFER_DELAY_TICKS;
+            stashTransferDelayTicks = 2;
+        } else if (stashTransferDelayTicks > 100) {
+            stashTransferDelayTicks = 100;
         }
 
+        // 预留格上限 26：主背包共 27 格，留满就没法买东西了。
         if (stashReserveSlots < 0) {
-            stashReserveSlots = DEFAULT_STASH_RESERVE_SLOTS;
-        } else if (stashReserveSlots > MAX_STASH_RESERVE_SLOTS) {
-            LOGGER.warn("stashReserveSlots={} too large, clamped to {}.",
-                    stashReserveSlots, MAX_STASH_RESERVE_SLOTS);
-            stashReserveSlots = MAX_STASH_RESERVE_SLOTS;
+            stashReserveSlots = 1;
+        } else if (stashReserveSlots > 26) {
+            stashReserveSlots = 26;
         }
     }
 
