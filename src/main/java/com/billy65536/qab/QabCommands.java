@@ -10,6 +10,8 @@ import com.billy65536.qab.automatic.ShoppingRunner;
 import com.billy65536.qab.config.QabConfig;
 import com.billy65536.qab.generator.ListGenConfig;
 import com.billy65536.qab.generator.SchematicListGenerator;
+import com.billy65536.qab.gui.ShoppingListScreen;
+import com.billy65536.qab.gui.ShoppingListSource;
 import com.billy65536.qab.integration.CsNavigationHelper;
 import com.billy65536.qab.integration.CsQShopDbLoader;
 import com.billy65536.qab.planner.ShoppingPlanner;
@@ -204,8 +206,18 @@ public class QabCommands {
                                     .suggests(COMPOUND_SUGGESTIONS)
                                     .executes(QabCommands::execCompoundOpen)));
 
+            // /qab list gui [file] —— 购物清单查看/编辑 GUI（缺省回落当前选中清单）
+            var list = literal("list")
+                    .then(literal("gui")
+                            .executes(QabCommands::execListGui)
+                            .then(argument("file", StringArgumentType.string())
+                                    .suggests(LIST_SUGGESTIONS)
+                                    .executes(ctx -> execListGui(ctx,
+                                            StringArgumentType.getString(ctx, "file")))));
+
             var help = literal("help").executes(QabCommands::execHelp);
 
+            root.then(list);
             root.then(select);
             root.then(plan);
             root.then(nav);
@@ -271,6 +283,46 @@ public class QabCommands {
         }
         ctx.getSource().sendError(Text.translatable("qab.msg.list_not_found", file, QAB_LIST_DIR.toString()));
         return 0;
+    }
+
+    // ---- list gui ----
+    private static int execListGui(CommandContext<FabricClientCommandSource> ctx) {
+        return execListGui(ctx, null);
+    }
+
+    private static int execListGui(CommandContext<FabricClientCommandSource> ctx, String file) {
+        Path target;
+        if (file != null && !file.isBlank()) {
+            target = CommandPathHelper.resolveFile(QAB_LIST_DIR, file, ".json");
+            if (target == null) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.list_not_found", file, QAB_LIST_DIR.toString()));
+                return 0;
+            }
+        } else {
+            target = selectedList;
+            if (target == null) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.no_list_selected"));
+                return 0;
+            }
+        }
+        if (!Files.exists(target)) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.list_not_found",
+                    target.getFileName().toString(), QAB_LIST_DIR.toString()));
+            return 0;
+        }
+        ShoppingListSource source = ShoppingListSource.load(target);
+        if (source == null) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.list_parse_failed",
+                    target.getFileName().toString(), "JSON parse or read error"));
+            return 0;
+        }
+        if (source.size() == 0) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.list_empty", target.getFileName().toString()));
+            return 0;
+        }
+        var client = ctx.getSource().getClient();
+        client.setScreen(new ShoppingListScreen(source, client.currentScreen));
+        return 1;
     }
 
     // ---- plan generator ----
@@ -921,7 +973,7 @@ public class QabCommands {
         return 1;
     }
 
-    private static ShoppingList loadShoppingList(Path path) {
+    public static ShoppingList loadShoppingList(Path path) {
         if (!Files.exists(path)) return null;
         try {
             String json = Files.readString(path, StandardCharsets.UTF_8);
@@ -929,6 +981,21 @@ public class QabCommands {
         } catch (Exception e) {
             LOGGER.error("Failed to load shopping list: {}", path, e);
             return null;
+        }
+    }
+
+    /** 将购物清单以 Gson pretty 格式写回 JSON（与命令层持久化约定一致）。 */
+    public static boolean saveShoppingList(Path path, ShoppingList list) {
+        try {
+            if (path.getParent() != null) {
+                Files.createDirectories(path.getParent());
+            }
+            String json = new GsonBuilder().setPrettyPrinting().create().toJson(list);
+            Files.writeString(path, json, StandardCharsets.UTF_8);
+            return true;
+        } catch (Exception e) {
+            LOGGER.error("Failed to save shopping list: {}", path, e);
+            return false;
         }
     }
 

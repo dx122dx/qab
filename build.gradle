@@ -48,6 +48,10 @@ repositories {
         url = 'https://maven.terraformersmc.com/'
     }
     maven {
+        name = 'Gegy'
+        url = 'https://maven.gegy.dev/releases/'
+    }
+    maven {
         name = 'Shedaniel'
         url = 'https://maven.shedaniel.me/'
     }
@@ -83,6 +87,18 @@ dependencies {
     // Cloth Config / AutoConfig — 必需依赖：配置模型由 AutoConfig 驱动持久化与 GUI
     modImplementation("me.shedaniel.cloth:cloth-config-fabric:${project.cloth_config_version}") {
         exclude(group: "net.fabricmc.fabric-api")
+    }
+
+    // SpruceUI — 清单查看/编辑 GUI 框架（yarn 生态，与 modmenu 同源；官方仓库为 Gegy）
+    // modImplementation 提供编译期 API；include 将其以 jar-in-jar 打进最终 jar（JiJ），
+    // 玩家无需单独安装。SpruceUI 的 POM 非 optional 依赖 fabric-loader 与 fabric-api 模块，
+    // 必须排除，避免把这两者错误地打包进产物。
+    modImplementation("dev.lambdaurora:spruceui:${project.spruceui_version}") {
+        exclude(group: "net.fabricmc.fabric-api")
+    }
+    include("dev.lambdaurora:spruceui:${project.spruceui_version}") {
+        exclude(group: "net.fabricmc.fabric-api")
+        exclude(group: "net.fabricmc")
     }
 
     // schematic4j — 解析 .litematic / .schem / .schematic 原理图，用于生成购物清单
