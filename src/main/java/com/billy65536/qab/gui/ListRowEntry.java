@@ -19,8 +19,8 @@ import java.util.List;
 /**
  * 清单列表中的一行（SpruceUI Entry）。
  *
- * <p>负责行渲染（序号/图标/名称/ID/详情三行 + 现有/需求/冗余数量 + 四个行按钮），
- * 以及行内编辑态（内嵌 {@link SpruceTextFieldWidget} 修改需求数量：
+ * <p>负责行渲染（序号/图标/名称/ID/详情三行 + 现有/需求/冗余数量 + 上移/下移/删除三个按钮），
+ * 以及行内编辑态（内嵌 {@link SpruceTextFieldWidget} 修改需求数量——点击「需求」数量列进入：
  * 回车确认、Esc 取消、失焦自动确认）。所有行操作经 {@link ShoppingListScreen} 回调
  * {@link com.billy65536.qab.gui.IListSource}，保存动作由屏幕底部的「保存」按钮统一触发。</p>
  */
@@ -35,11 +35,12 @@ public class ListRowEntry extends SpruceEntryListWidget.Entry {
     private static final int COLOR_BTN_HOVER = 0xAA666666;
     private static final int COLOR_BTN_DELETE_HOVER = 0x99FF5555;
     private static final int COLOR_ROW_HOVER = 0x18FFFFFF;
-    private static final int COLOR_ROW_LINE = 0x33000000;
+    /** 行间 2px 分隔线（浅色，深底上可见）。 */
+    private static final int COLOR_ROW_LINE = 0x22FFFFFF;
     private static final int COLOR_PLACEHOLDER = 0xFF555555;
 
-    /** 行按钮图标：上移 / 下移 / 编辑 / 删除。 */
-    private static final String[] BTN_LABELS = {"↑", "↓", "编", "×"};
+    /** 行按钮图标：上移 / 下移 / 删除（编辑改为点击「需求」列进入）。 */
+    private static final String[] BTN_LABELS = {"↑", "↓", "×"};
 
     private static final int BTN_TOP = 3;
     private static final float SCALE_SMALL = 0.8f;
@@ -69,11 +70,11 @@ public class ListRowEntry extends SpruceEntryListWidget.Entry {
         var font = this.client.textRenderer;
         boolean hover = this.isMouseOver(mouseX, mouseY);
 
-        // 行悬停高亮 + 底部分隔线
+        // 行悬停高亮 + 底部 2px 分隔线
         if (hover) {
             graphics.fill(x, y, x + w, y + this.height, COLOR_ROW_HOVER);
         }
-        graphics.fill(x, y + this.height - 1, x + w, y + this.height, COLOR_ROW_LINE);
+        graphics.fill(x, y + this.height - 2, x + w, y + this.height, COLOR_ROW_LINE);
 
         int iconX = x + ShoppingListScreen.SEQ_W;
         int iconY = y + (this.height - 16) / 2;
@@ -164,6 +165,12 @@ public class ListRowEntry extends SpruceEntryListWidget.Entry {
                 return true;
             }
         }
+        // 点击「需求」数量列 → 进入编辑态（替代原「编」按钮）
+        int rx = this.getX() + this.screen.needX();
+        if (mouseX >= rx && mouseX < rx + this.screen.needW()) {
+            this.startEdit();
+            return true;
+        }
         return false;
     }
 
@@ -194,8 +201,7 @@ public class ListRowEntry extends SpruceEntryListWidget.Entry {
         switch (button) {
             case 0 -> this.screen.moveUp(this.index);
             case 1 -> this.screen.moveDown(this.index);
-            case 2 -> this.startEdit();
-            case 3 -> this.screen.removeItem(this.index);
+            case 2 -> this.screen.removeItem(this.index);
         }
     }
 

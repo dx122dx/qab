@@ -17,6 +17,7 @@
     "qab.msg.list_gui.save_failed": "Failed to save shopping list; check the log.",
     "qab.msg.list_gui.h_seq": "Seq",
     "qab.msg.list_gui.h_item": "Item",
+    "qab.msg.list_gui.h_name": "Name",
     "qab.msg.list_gui.h_id": "ID",
     "qab.msg.list_gui.h_detail": "Details",
     "qab.msg.list_gui.h_have": "Have",
