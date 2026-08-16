@@ -320,8 +320,18 @@ public class QabCommands {
             ctx.getSource().sendError(Text.translatable("qab.msg.list_empty", target.getFileName().toString()));
             return 0;
         }
-        var client = ctx.getSource().getClient();
-        client.setScreen(new ShoppingListScreen(source, client.currentScreen));
+        LOGGER.info("Opening shopping list GUI: {}", target);
+        try {
+            var client = ctx.getSource().getClient();
+            // 必须用 send（延迟到下一帧）而非同步 setScreen：命令运行于客户端主线程，
+            // 同步切屏后，聊天框关闭时的 setScreen(null) 会将其覆盖，导致「有日志但屏幕不出现」。
+            // 延迟到聊天框关闭后再切屏，与 infrastructure 的 config GUI 打开方式一致。
+            client.send(() -> client.setScreen(new ShoppingListScreen(source, client.currentScreen)));
+        } catch (Throwable t) {
+            LOGGER.error("Failed to open shopping list GUI for {}", target, t);
+            ctx.getSource().sendError(Text.literal("Failed to open list GUI: " + t));
+            return 0;
+        }
         return 1;
     }
 

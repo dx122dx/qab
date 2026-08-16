@@ -12,6 +12,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.text.Text;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -125,8 +126,12 @@ public class ShoppingListScreen extends SpruceScreen {
     /** 重建列表行（行操作后调用，保持滚动位置）。 */
     private void rebuildList() {
         this.listWidget.clearRows();
+        List<ShoppingItem> items = this.source.getItems();
+        if (items == null) {
+            return;
+        }
         int index = 0;
-        for (ShoppingItem item : this.source.getItems()) {
+        for (ShoppingItem item : items) {
             if (item == null) continue;
             this.listWidget.addEntry(new ListRowEntry(this, item, index));
             index++;
@@ -160,8 +165,10 @@ public class ShoppingListScreen extends SpruceScreen {
     private void refreshHaveCounts() {
         var player = this.client.player;
         if (player == null) return;
+        List<ShoppingItem> items = this.source.getItems();
+        if (items == null) return;
         this.haveCache.clear();
-        for (ShoppingItem item : this.source.getItems()) {
+        for (ShoppingItem item : items) {
             if (item.getId() == null || item.getId().isBlank()) continue;
             this.haveCache.put(item.getId(), InventoryCapacityCalculator.countItems(player, item.getId()));
         }
