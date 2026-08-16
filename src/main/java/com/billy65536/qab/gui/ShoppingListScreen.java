@@ -97,7 +97,7 @@ public class ShoppingListScreen extends SpruceScreen {
         int listH = this.height - HEADER_Y - FOOTER_H;
         this.listWidget = new ShoppingListWidget(Position.of(0, HEADER_Y), this.width, Math.max(listH, 1), 0);
         this.listWidget.setBackground(new SimpleColorBackground(0xC0101010));
-        this.listWidget.setBorder(new SimpleBorder(0xFF666666, 1));
+        this.listWidget.setBorder(new SimpleBorder(1, 0xFF666666));
         this.computeColumns();
         this.rebuildList();
         this.addDrawableChild(this.listWidget);
