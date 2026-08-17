@@ -25,7 +25,6 @@
         "java": ">=17",
         "fabric-api": "*",
         "cloth-config": "*",
-        "spruceui": "*",
         "chunkscanner": ">=${chunkscanner_version}",
         "infrastructure": ">=${infrastructure_version}"
     }

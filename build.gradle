@@ -89,18 +89,6 @@ dependencies {
         exclude(group: "net.fabricmc.fabric-api")
     }
 
-    // SpruceUI — 清单查看/编辑 GUI 框架（yarn 生态，与 modmenu 同源；官方仓库为 Gegy）
-    // modImplementation 提供编译期 API；include 将其以 jar-in-jar 打进最终 jar（JiJ），
-    // 玩家无需单独安装。SpruceUI 的 POM 非 optional 依赖 fabric-loader 与 fabric-api 模块，
-    // 必须排除，避免把这两者错误地打包进产物。
-    modImplementation("dev.lambdaurora:spruceui:${project.spruceui_version}") {
-        exclude(group: "net.fabricmc.fabric-api")
-    }
-    include("dev.lambdaurora:spruceui:${project.spruceui_version}") {
-        exclude(group: "net.fabricmc.fabric-api")
-        exclude(group: "net.fabricmc")
-    }
-
     // schematic4j — 解析 .litematic / .schem / .schematic 原理图，用于生成购物清单
     // 普通 Java 库（非 mod），需 include 打进最终 jar
     implementation "net.sandrohc:schematic4j:${project.schematic4j_version}"

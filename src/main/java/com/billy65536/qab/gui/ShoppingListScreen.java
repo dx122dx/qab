@@ -1,15 +1,15 @@
 package com.billy65536.qab.gui;
 
+import com.billy65536.infrastructure.core.gui.ScreenContainer;
+import com.billy65536.infrastructure.core.gui.layout.DynamicTextCell;
+import com.billy65536.infrastructure.core.gui.layout.MultiLineTextCell;
+import com.billy65536.infrastructure.core.gui.layout.TableLayout;
+import com.billy65536.infrastructure.core.gui.layout.TableLayoutBuilder;
 import com.billy65536.qab.automatic.InventoryCapacityCalculator;
 import com.billy65536.qab.planner.model.ShoppingItem;
-import dev.lambdaurora.spruceui.Position;
-import dev.lambdaurora.spruceui.background.SimpleColorBackground;
-import dev.lambdaurora.spruceui.border.SimpleBorder;
-import dev.lambdaurora.spruceui.screen.SpruceScreen;
-import dev.lambdaurora.spruceui.widget.SpruceButtonWidget;
-import dev.lambdaurora.spruceui.widget.container.SpruceEntryListWidget;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.enchantment.Enchantment;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
@@ -22,16 +22,18 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 购物清单查看/编辑界面（基于 SpruceUI）。
+ * 购物清单查看/编辑界面（infrastructure 布局框架 ScreenContainer + TableLayout）。
  *
- * <p>只依赖 {@link IListSource} 抽象数据源，不直接触碰 {@link com.billy65536.qab.planner.model.ShoppingList}
- * 与持久化细节；将来「计划查看/编辑」可传入其它 IListSource 实现复用本界面。</p>
+ * <p>只依赖 {@link IListSource} 抽象数据源，不直接触碰
+ * {@link com.billy65536.qab.planner.model.ShoppingList} 与持久化细节；将来
+ * 「计划查看/编辑」可传入其它 IListSource 实现复用本界面。</p>
  *
- * <p>布局：顶部标题 + 金色分隔线 + 表头，中部 SpruceEntryListWidget 滚动列表
- * （每行：序号 → 物品图标 → 名称/ID/详情 → 现有/需求/冗余数量 → 上移/下移/删除按钮），
- * 底部「返回」「保存」按钮。列宽按内容自动测量分配（名称列弹性）。</p>
+ * <p>顶部标题 + 金色分隔线 + 表头，中部 TableLayout 滚动列表
+ * （序号 → 图标 → 名称/ID/详情 → 现有/需求/冗余数量 → 上移/下移/删除），
+ * 底部「返回」「保存」按钮。列宽由 TableLayout#reflow 按内容测量与权重分配；
+ * 「需求」列行内编辑由 TableLayout 编辑框托管，事件经 ScreenContainer 递归分发。</p>
  */
-public class ShoppingListScreen extends SpruceScreen {
+public class ShoppingListScreen extends ScreenContainer {
     /** 列表顶部（标题 + 表头区）高度。 */
     public static final int HEADER_Y = 36;
     /** 底部按钮区高度。 */
@@ -46,34 +48,39 @@ public class ShoppingListScreen extends SpruceScreen {
     public static final int BTN_W = 18;
     /** 行按钮间距。 */
     public static final int BTN_GAP = 2;
-
-    /** 行内按钮数（上移 / 下移 / 删除；编辑改为点击「需求」列进入）。 */
+    /** 行内按钮数（上移 / 下移 / 删除）。 */
     public static final int BTNS = 3;
-    /** 列宽权重单位总数：名称+图标 7 : ID 3 : 详情 2 : 现有 5 : 需求 4 : 冗余 3。 */
-    private static final int COL_UNITS = 24;
 
     /** 现有数量刷新间隔（tick）。 */
     private static final int HAVE_REFRESH_TICKS = 10;
+    /** 详情最多显示行数。 */
+    private static final int DETAIL_MAX_LINES = 2;
+
+    private static final int COLOR_GRAY = 0xFFAAAAAA;
+    private static final int COLOR_GREEN = 0xFF55FF55;
+    private static final int COLOR_YELLOW = 0xFFFFFF55;
+    private static final int COLOR_LIGHT_BLUE = 0xFFAACCFF;
+    private static final int COLOR_DELETE_HOVER = 0x99FF5555;
+
+    /** 九栏表头翻译键（序号/物品/名称/ID/详情/现有/需求/冗余/操作）。 */
+    private static final String[] HEADER_KEYS = {
+            "qab.msg.list_gui.h_seq",
+            "qab.msg.list_gui.h_item",
+            "qab.msg.list_gui.h_name",
+            "qab.msg.list_gui.h_id",
+            "qab.msg.list_gui.h_detail",
+            "qab.msg.list_gui.h_have",
+            "qab.msg.list_gui.h_need",
+            "qab.msg.list_gui.h_redun",
+            "qab.msg.list_gui.h_action",
+    };
 
     private final IListSource<ShoppingItem> source;
     private final Screen parent;
     private final Map<String, Integer> haveCache = new HashMap<>();
     private int haveTick;
 
-    private ShoppingListWidget listWidget;
-    private int rowWidth;
-    /** 行内各列起点 x（相对行左缘）。 */
-    private int nameX;
-    private int idX;
-    private int detX;
-    private int haveX;
-    private int needX;
-    private int redunX;
-    private int btnsX;
-    /** 各数量列宽。 */
-    private int haveW;
-    private int needW;
-    private int redunW;
+    private TableLayout layout;
 
     public ShoppingListScreen(IListSource<ShoppingItem> source, Screen parent) {
         super(Text.literal(listTitle(source)));
@@ -93,107 +100,101 @@ public class ShoppingListScreen extends SpruceScreen {
 
     @Override
     protected void init() {
-        super.init();
-        int listH = this.height - HEADER_Y - FOOTER_H;
-        this.listWidget = new ShoppingListWidget(Position.of(0, HEADER_Y), this.width, Math.max(listH, 1), 0);
-        this.listWidget.setBackground(new SimpleColorBackground(0xC0101010));
-        this.listWidget.setBorder(new SimpleBorder(1, 0xFF666666));
-        this.computeColumns();
-        this.rebuildList();
-        this.addDrawableChild(this.listWidget);
+        this.addDrawableChild(ButtonWidget.builder(
+                        Text.translatable("qab.msg.list_gui.back"), b -> this.closeScreen())
+                .dimensions(8, this.height - 24, 80, 20).build());
+        this.addDrawableChild(ButtonWidget.builder(
+                        Text.translatable("qab.msg.list_gui.save"), b -> this.save())
+                .dimensions(this.width - 88, this.height - 24, 80, 20).build());
 
-        this.addDrawableChild(new SpruceButtonWidget(
-                Position.of(8, this.height - 24), 80, 20,
-                Text.translatable("qab.msg.list_gui.back"), b -> this.closeScreen()));
-        this.addDrawableChild(new SpruceButtonWidget(
-                Position.of(this.width - 88, this.height - 24), 80, 20,
-                Text.translatable("qab.msg.list_gui.save"), b -> this.save()));
+        this.layout = this.buildLayout();
+        this.setLayout(this.layout);
+        super.init();
+        // ScreenContainer.init 将根节点铺满全屏；表格需让出标题/表头与底部按钮区
+        this.layout.setBounds(0, HEADER_Y, this.width, this.height - FOOTER_H);
+        this.layout.reflow(this.width);
     }
 
-    /**
-     * 计算行内列布局。
-     *
-     * <p>列宽先按权重（名称+图标 7 : ID 3 : 详情 2 : 现有 5 : 需求 4 : 冗余 3）分配，
-     * 再以各列内容最大宽度为下限自动放大；总宽超出可用宽时优先回收富余、再按
-     * 「详情→ID→名称」顺序压缩，最终富余空间全部归名称列（弹性列）。</p>
-     */
-    private void computeColumns() {
-        this.rowWidth = this.listWidget.getInnerWidth();
-        int avail = this.rowWidth - SEQ_W - (BTN_W * BTNS + BTN_GAP * (BTNS - 1));
-        var font = this.textRenderer;
+    /* ---- 布局构建 ---- */
 
-        // 文本列内容最大宽度（名称 9px / ID、详情 8px 缩放）
-        int nameC = ICON_W + 8;
-        int idC = 8;
-        int detC = 8;
+    /** 冗余数量（来自 ShoppingListSource 的清单配置，其它数据源返回 0）。 */
+    private int getRedundancy() {
+        return this.source instanceof ShoppingListSource s ? s.getList().getRedundancy() : 0;
+    }
+
+    /** 重建表格（行操作/合法编辑提交后调用，保持滚动位置）。 */
+    private void rebuildKeepScroll() {
+        int scroll = this.layout.getScrollOffset();
+        this.layout = this.buildLayout();
+        this.layout.setBounds(0, HEADER_Y, this.width, this.height - FOOTER_H);
+        this.layout.reflow(this.width);
+        this.layout.setScrollOffset(scroll);
+        this.setLayout(this.layout);
+    }
+
+    private TableLayout buildLayout() {
         List<ShoppingItem> items = this.source.getItems();
+        int redundancy = this.getRedundancy();
+        int haveFallback = this.textRenderer.getWidth("9999") + 10;
+
+        String[] headers = new String[HEADER_KEYS.length];
+        for (int i = 0; i < HEADER_KEYS.length; i++) {
+            headers[i] = Text.translatable(HEADER_KEYS[i]).getString();
+        }
+        TableLayout.ColumnSpec[] specs = {
+                TableLayout.ColumnSpec.ofFixed(SEQ_W, TableLayout.ColumnSpec.Align.CENTER),
+                TableLayout.ColumnSpec.ofFixed(ICON_W, TableLayout.ColumnSpec.Align.CENTER),
+                TableLayout.ColumnSpec.ofWeight(7, TableLayout.ColumnSpec.Align.LEFT).elastic().shrinkPriority(2),
+                TableLayout.ColumnSpec.ofWeight(3, TableLayout.ColumnSpec.Align.LEFT).shrinkPriority(1),
+                TableLayout.ColumnSpec.ofWeight(2, TableLayout.ColumnSpec.Align.LEFT).shrinkPriority(0),
+                TableLayout.ColumnSpec.ofWeight(5, TableLayout.ColumnSpec.Align.CENTER).shrinkPriority(5),
+                TableLayout.ColumnSpec.ofWeight(4, TableLayout.ColumnSpec.Align.CENTER).shrinkPriority(4).floorWidth(48),
+                TableLayout.ColumnSpec.ofWeight(3, TableLayout.ColumnSpec.Align.CENTER).shrinkPriority(3),
+                TableLayout.ColumnSpec.ofFixed(BTN_W * BTNS + BTN_GAP * (BTNS - 1), TableLayout.ColumnSpec.Align.CENTER),
+        };
+
+        TableLayoutBuilder builder = new TableLayoutBuilder(this.textRenderer, headers, specs, ROW_HEIGHT)
+                .rowSeparator(0x22FFFFFF, 2);
+
         if (items != null) {
-            for (ShoppingItem item : items) {
+            for (int i = 0; i < items.size(); i++) {
+                ShoppingItem item = items.get(i);
                 if (item == null) {
                     continue;
                 }
-                nameC = Math.max(nameC, ICON_W + font.getWidth(this.stackOf(item).getName()) + 8);
-                String id = item.getId();
-                if (id != null && !id.isBlank()) {
-                    idC = Math.max(idC, (int) (font.getWidth(id) * 0.8f) + 8);
-                }
-                for (String detail : this.detailsOf(item)) {
-                    detC = Math.max(detC, (int) (font.getWidth(detail) * 0.8f) + 8);
-                }
+                this.appendRow(builder, item, i, redundancy, haveFallback);
             }
         }
-        // 数量列（数字很短，按上限估算；需求列需容纳编辑框）
-        int haveC = font.getWidth("9999") + 10;
-        int needC = Math.max(font.getWidth("99999") + 10, 48);
-        int redunC = font.getWidth("+99") + 10;
+        return builder.build();
+    }
 
-        // 权重基础宽与内容下限取大者
-        float unit = Math.max(avail / (float) COL_UNITS, 1f);
-        int[] w = {
-                Math.max((int) (7 * unit), nameC),
-                Math.max((int) (3 * unit), idC),
-                Math.max((int) (2 * unit), detC),
-                Math.max((int) (5 * unit), haveC),
-                Math.max((int) (4 * unit), needC),
-                Math.max((int) (3 * unit), redunC)
-        };
-        int[] content = {nameC, idC, detC, haveC, needC, redunC};
+    /** 装配一行单元格（九列：序号/图标/名称/ID/详情/现有/需求/冗余/操作）。 */
+    private void appendRow(TableLayoutBuilder builder, ShoppingItem item, int index,
+                           int redundancy, int haveFallback) {
+        ItemStack stack = this.stackOf(item);
+        List<String> details = this.detailsOf(item);
+        String id = item.getId();
 
-        // 总宽超出可用宽：先回收「富余」列，再按 详情→ID→名称→冗余→需求→现有 压缩到内容下限
-        int over = w[0] + w[1] + w[2] + w[3] + w[4] + w[5] - avail;
-        for (int i = 0; i < 6 && over > 0; i++) {
-            int extra = w[i] - content[i];
-            if (extra > 0) {
-                int take = Math.min(extra, over);
-                w[i] -= take;
-                over -= take;
-            }
+        TableLayoutBuilder.RowBuilder row = builder.addRow();
+        row.text(Text.literal(String.valueOf(index + 1)), COLOR_GRAY);
+        row.item(stack);
+        row.text(stack.getName(), 0xFFFFFFFF);
+        if (id == null || id.isBlank()) {
+            row.blank();
+        } else {
+            row.cell(MultiLineTextCell.of(List.of(id), COLOR_GRAY, 0.8f, 14, 10));
         }
-        int[] order = {2, 1, 0, 5, 4, 3};
-        for (int c : order) {
-            if (over <= 0) {
-                break;
-            }
-            int floor = Math.max(content[c] / 2, 24);
-            int reducible = Math.max(w[c] - floor, 0);
-            int take = Math.min(reducible, over);
-            w[c] -= take;
-            over -= take;
-        }
-        // 富余空间归名称列（弹性）
-        w[0] -= over;
-
-        int iconName = w[0];
-        this.nameX = SEQ_W + ICON_W;
-        this.idX = SEQ_W + iconName;
-        this.detX = this.idX + w[1];
-        this.haveX = this.detX + w[2];
-        this.needX = this.haveX + w[3];
-        this.redunX = this.needX + w[4];
-        this.btnsX = this.redunX + w[5];
-        this.haveW = w[3];
-        this.needW = w[4];
-        this.redunW = w[5];
+        row.cell(MultiLineTextCell.of(details, COLOR_YELLOW, 0.8f, 14, DETAIL_MAX_LINES));
+        row.cell(DynamicTextCell.of(() -> this.haveText(item.getId()),
+                COLOR_GREEN, TableLayout.ColumnSpec.Align.CENTER, haveFallback));
+        row.text(Text.literal(String.valueOf(item.getCount())), COLOR_YELLOW)
+                .editable(String.valueOf(item.getCount()), v -> this.commitCount(item, v));
+        row.text(Text.literal("+" + redundancy), COLOR_LIGHT_BLUE);
+        row.blank(); // 操作列占位
+        row.button(Text.literal("↑"), () -> this.moveUp(index));
+        row.button(Text.literal("↓"), () -> this.moveDown(index));
+        row.button(Text.literal("×"), () -> this.removeItem(index), COLOR_DELETE_HOVER);
+        row.done();
     }
 
     /** 构造物品 ItemStack（非法 ID 返回 EMPTY）。 */
@@ -209,7 +210,7 @@ public class ShoppingListScreen extends SpruceScreen {
         return new ItemStack(Registries.ITEM.get(identifier));
     }
 
-    /** 行详情文字（附魔 + NBT 要求），与 {@link ListRowEntry#buildDetails()} 同构。 */
+    /** 行详情文字（附魔 + NBT 要求）。 */
     private List<String> detailsOf(ShoppingItem item) {
         List<String> out = new ArrayList<>(4);
         var enchants = item.getEnchant();
@@ -231,36 +232,44 @@ public class ShoppingListScreen extends SpruceScreen {
         return out;
     }
 
-    /** 重建列表行（行操作后调用，保持滚动位置）。 */
-    private void rebuildList() {
-        this.listWidget.clearRows();
-        List<ShoppingItem> items = this.source.getItems();
-        if (items == null) {
+    /* ---- 行内编辑（点击「需求」列进入） ---- */
+
+    /** 需求数量提交：非法输入忽略（表格重建后自动恢复原值显示），合法则写回并刷新显示。 */
+    private void commitCount(ShoppingItem item, String text) {
+        String t = text == null ? "" : text.trim();
+        int value = -1;
+        if (!t.isEmpty()) {
+            try {
+                value = Integer.parseInt(t);
+            } catch (NumberFormatException ignored) {
+                value = -1;
+            }
+        }
+        if (value < 0) {
             return;
         }
-        int index = 0;
-        for (ShoppingItem item : items) {
-            if (item == null) continue;
-            this.listWidget.addEntry(new ListRowEntry(this, item, index));
-            index++;
-        }
+        item.setCount(value);
+        this.rebuildKeepScroll();
     }
 
-    /* ---- 行操作（由 ListRowEntry 调用） ---- */
+    /* ---- 行操作 ---- */
 
     public void moveUp(int index) {
+        this.layout.cancelEdit();
         this.source.moveUp(index);
-        this.rebuildList();
+        this.rebuildKeepScroll();
     }
 
     public void moveDown(int index) {
+        this.layout.cancelEdit();
         this.source.moveDown(index);
-        this.rebuildList();
+        this.rebuildKeepScroll();
     }
 
     public void removeItem(int index) {
+        this.layout.cancelEdit();
         this.source.remove(index);
-        this.rebuildList();
+        this.rebuildKeepScroll();
     }
 
     /* ---- 现有数量（每 10 tick 刷新） ---- */
@@ -270,14 +279,25 @@ public class ShoppingListScreen extends SpruceScreen {
         return count == null ? -1 : count;
     }
 
+    private String haveText(String itemId) {
+        int have = this.haveCache.getOrDefault(itemId, -1);
+        return have < 0 ? "?" : String.valueOf(have);
+    }
+
     private void refreshHaveCounts() {
         var player = this.client.player;
-        if (player == null) return;
+        if (player == null) {
+            return;
+        }
         List<ShoppingItem> items = this.source.getItems();
-        if (items == null) return;
+        if (items == null) {
+            return;
+        }
         this.haveCache.clear();
         for (ShoppingItem item : items) {
-            if (item.getId() == null || item.getId().isBlank()) continue;
+            if (item.getId() == null || item.getId().isBlank()) {
+                continue;
+            }
             this.haveCache.put(item.getId(), InventoryCapacityCalculator.countItems(player, item.getId()));
         }
     }
@@ -303,84 +323,27 @@ public class ShoppingListScreen extends SpruceScreen {
         }
     }
 
+    /** 返回父屏幕（构造时传入）。 */
     private void closeScreen() {
         this.client.setScreen(this.parent);
     }
 
-    /* ---- 渲染：标题 + 表头 ---- */
+    /* ---- 渲染 ---- */
 
     @Override
-    public void renderTitle(DrawContext graphics, int mouseX, int mouseY, float delta) {
-        // 标题（18px ≈ 9px 放大 2 倍，居中，占 y=4~22）
+    public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
+        super.render(ctx, mouseX, mouseY, delta); // 背景 + 表格 + 布局 tooltip
+        this.renderTitleHeader(ctx);
+        this.renderWidgets(ctx, mouseX, mouseY, delta); // 底部按钮
+    }
+
+    /** 标题（2 倍放大居中）+ 金色细分隔线。 */
+    private void renderTitleHeader(DrawContext graphics) {
         var matrices = graphics.getMatrices();
         matrices.push();
         matrices.scale(2f, 2f, 1f);
         graphics.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 4, 2, 0xFFFFFFFF);
         matrices.pop();
-        // 金色细分隔线（标题正下方，y=24~25，与表头/列表分离）
         graphics.fill(0, 24, this.width, 25, 0xFFFFAA00);
-        // 九栏表头（金色，对齐行内列）：序号/物品/名称/ID/详情/现有/需求/冗余/操作
-        this.drawHeader(graphics, "qab.msg.list_gui.h_seq", SEQ_W / 2);
-        this.drawHeader(graphics, "qab.msg.list_gui.h_item", SEQ_W + ICON_W / 2);
-        this.drawHeader(graphics, "qab.msg.list_gui.h_name", this.nameX + (this.idX - this.nameX) / 2);
-        this.drawHeader(graphics, "qab.msg.list_gui.h_id", (this.idX + this.detX) / 2);
-        this.drawHeader(graphics, "qab.msg.list_gui.h_detail", (this.detX + this.haveX) / 2);
-        this.drawHeader(graphics, "qab.msg.list_gui.h_have", this.haveX + this.haveW / 2);
-        this.drawHeader(graphics, "qab.msg.list_gui.h_need", this.needX + this.needW / 2);
-        this.drawHeader(graphics, "qab.msg.list_gui.h_redun", this.redunX + this.redunW / 2);
-        this.drawHeader(graphics, "qab.msg.list_gui.h_action",
-                this.btnsX + (BTN_W * BTNS + BTN_GAP * (BTNS - 1)) / 2);
-    }
-
-    private void drawHeader(DrawContext graphics, String key, int x) {
-        graphics.drawCenteredTextWithShadow(this.textRenderer, Text.translatable(key), x, HEADER_Y - 9, 0xFFFFAA00);
-    }
-
-    /* ---- 列布局访问（供 ListRowEntry 使用） ---- */
-
-    public int getRowWidth() {
-        return this.rowWidth;
-    }
-
-    public int nameX() { return this.nameX; }
-
-    public int idX() { return this.idX; }
-
-    public int detX() { return this.detX; }
-
-    public int haveX() { return this.haveX; }
-
-    public int needX() { return this.needX; }
-
-    public int redunX() { return this.redunX; }
-
-    public int btnsX() { return this.btnsX; }
-
-    public int haveW() { return this.haveW; }
-
-    public int needW() { return this.needW; }
-
-    public int redunW() { return this.redunW; }
-
-    /** 清单级冗余数量（仅展示，不参与需求计算）。 */
-    public int getRedundancy() {
-        return this.source instanceof ShoppingListSource s ? s.getList().getRedundancy() : 0;
-    }
-
-    /** 内部列表控件：包装 protected 的增删入口，暴露为 public。 */
-    private static class ShoppingListWidget extends SpruceEntryListWidget<ListRowEntry> {
-        public ShoppingListWidget(Position position, int width, int height, int anchorYOffset) {
-            super(position, width, height, anchorYOffset, ListRowEntry.class);
-        }
-
-        @Override
-        public int addEntry(ListRowEntry entry) {
-            return super.addEntry(entry);
-        }
-
-        /** 清空全部行（父类 clearEntries 为 protected final，无法覆写，故另名包装）。 */
-        public void clearRows() {
-            super.clearEntries();
-        }
     }
 }
