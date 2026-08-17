@@ -52,24 +52,6 @@ public class ShoppingListSource implements IListSource<ShoppingItem> {
     }
 
     @Override
-    public void moveUp(int index) {
-        List<ShoppingItem> items = list.getItems();
-        if (items == null || index <= 0 || index >= items.size()) return;
-        ShoppingItem tmp = items.get(index - 1);
-        items.set(index - 1, items.get(index));
-        items.set(index, tmp);
-    }
-
-    @Override
-    public void moveDown(int index) {
-        List<ShoppingItem> items = list.getItems();
-        if (items == null || index < 0 || index >= items.size() - 1) return;
-        ShoppingItem tmp = items.get(index + 1);
-        items.set(index + 1, items.get(index));
-        items.set(index, tmp);
-    }
-
-    @Override
     public void remove(int index) {
         List<ShoppingItem> items = list.getItems();
         if (items == null || index < 0 || index >= items.size()) return;

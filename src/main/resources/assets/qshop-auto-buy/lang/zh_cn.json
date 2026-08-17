@@ -24,7 +24,6 @@
     "qab.msg.list_gui.h_have": "现有",
     "qab.msg.list_gui.h_need": "需求",
     "qab.msg.list_gui.h_redun": "冗余",
-    "qab.msg.list_gui.h_action": "操作",
     "qab.msg.db_load_failed": "加载 QShop 数据库 %s 失败：%s",
     "qab.msg.db_validation_issues": "数据库校验不通过：出现了 %d 个错误，%d 个警告。",
     "qab.msg.plan_write_failed": "写入计划到 %s 失败：%s",

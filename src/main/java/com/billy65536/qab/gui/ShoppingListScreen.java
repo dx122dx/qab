@@ -29,9 +29,10 @@ import java.util.Map;
  * 「计划查看/编辑」可传入其它 IListSource 实现复用本界面。</p>
  *
  * <p>顶部标题 + 金色分隔线 + 表头，中部 TableLayout 滚动列表
- * （序号 → 图标 → 名称/ID/详情 → 现有/需求/冗余数量 → 上移/下移/删除），
+ * （拖拽手柄 → 图标 → 名称/ID/详情 → 现有/需求/冗余数量），
  * 底部「返回」「保存」按钮。列宽由 TableLayout#reflow 按内容测量与权重分配；
- * 「需求」列行内编辑由 TableLayout 编辑框托管，事件经 ScreenContainer 递归分发。</p>
+ * 「需求」列行内编辑由 TableLayout 编辑框托管，事件经 ScreenContainer 递归分发；
+ * 行首手柄列支持拖拽排序（拖动到列表外释放删除行）。</p>
  */
 public class ShoppingListScreen extends ScreenContainer {
     /** 列表顶部（标题 + 表头区）高度。 */
@@ -40,16 +41,10 @@ public class ShoppingListScreen extends ScreenContainer {
     public static final int FOOTER_H = 28;
     /** 行高。 */
     public static final int ROW_HEIGHT = 26;
-    /** 序号列宽。 */
-    public static final int SEQ_W = 22;
+    /** 序号（拖拽手柄）列宽。 */
+    public static final int SEQ_W = 34;
     /** 图标列宽。 */
     public static final int ICON_W = 20;
-    /** 行按钮宽。 */
-    public static final int BTN_W = 18;
-    /** 行按钮间距。 */
-    public static final int BTN_GAP = 2;
-    /** 行内按钮数（上移 / 下移 / 删除）。 */
-    public static final int BTNS = 3;
 
     /** 现有数量刷新间隔（tick）。 */
     private static final int HAVE_REFRESH_TICKS = 10;
@@ -60,9 +55,8 @@ public class ShoppingListScreen extends ScreenContainer {
     private static final int COLOR_GREEN = 0xFF55FF55;
     private static final int COLOR_YELLOW = 0xFFFFFF55;
     private static final int COLOR_LIGHT_BLUE = 0xFFAACCFF;
-    private static final int COLOR_DELETE_HOVER = 0x99FF5555;
 
-    /** 九栏表头翻译键（序号/物品/名称/ID/详情/现有/需求/冗余/操作）。 */
+    /** 八栏表头翻译键（序号/物品/名称/ID/详情/现有/需求/冗余）。 */
     private static final String[] HEADER_KEYS = {
             "qab.msg.list_gui.h_seq",
             "qab.msg.list_gui.h_item",
@@ -72,7 +66,6 @@ public class ShoppingListScreen extends ScreenContainer {
             "qab.msg.list_gui.h_have",
             "qab.msg.list_gui.h_need",
             "qab.msg.list_gui.h_redun",
-            "qab.msg.list_gui.h_action",
     };
 
     private final IListSource<ShoppingItem> source;
@@ -150,17 +143,18 @@ public class ShoppingListScreen extends ScreenContainer {
         TableLayout.ColumnSpec[] specs = {
                 TableLayout.ColumnSpec.ofFixed(SEQ_W, TableLayout.ColumnSpec.Align.CENTER),
                 TableLayout.ColumnSpec.ofFixed(ICON_W, TableLayout.ColumnSpec.Align.CENTER),
-                TableLayout.ColumnSpec.ofWeight(7, TableLayout.ColumnSpec.Align.LEFT).elastic().shrinkPriority(2),
-                TableLayout.ColumnSpec.ofWeight(3, TableLayout.ColumnSpec.Align.LEFT).shrinkPriority(1),
-                TableLayout.ColumnSpec.ofWeight(2, TableLayout.ColumnSpec.Align.LEFT).shrinkPriority(0),
-                TableLayout.ColumnSpec.ofWeight(5, TableLayout.ColumnSpec.Align.CENTER).shrinkPriority(5),
-                TableLayout.ColumnSpec.ofWeight(4, TableLayout.ColumnSpec.Align.CENTER).shrinkPriority(4).floorWidth(48),
-                TableLayout.ColumnSpec.ofWeight(3, TableLayout.ColumnSpec.Align.CENTER).shrinkPriority(3),
-                TableLayout.ColumnSpec.ofFixed(BTN_W * BTNS + BTN_GAP * (BTNS - 1), TableLayout.ColumnSpec.Align.CENTER),
+                TableLayout.ColumnSpec.ofWeight(7, TableLayout.ColumnSpec.Align.LEFT).elastic().floorWidth(120),
+                TableLayout.ColumnSpec.ofWeight(3, TableLayout.ColumnSpec.Align.LEFT),
+                TableLayout.ColumnSpec.ofWeight(2, TableLayout.ColumnSpec.Align.LEFT),
+                TableLayout.ColumnSpec.ofWeight(5, TableLayout.ColumnSpec.Align.CENTER),
+                TableLayout.ColumnSpec.ofWeight(4, TableLayout.ColumnSpec.Align.CENTER).floorWidth(48),
+                TableLayout.ColumnSpec.ofWeight(3, TableLayout.ColumnSpec.Align.CENTER),
         };
 
         TableLayoutBuilder builder = new TableLayoutBuilder(this.textRenderer, headers, specs, ROW_HEIGHT)
-                .rowSeparator(0x22FFFFFF, 2);
+                .rowSeparator(0x22FFFFFF, 2)
+                // 拖拽排序：行首手柄列拖拽移动，拖出列表释放删除行
+                .dragHandle(0, this::moveItem, this::removeItem);
 
         if (items != null) {
             for (int i = 0; i < items.size(); i++) {
@@ -174,7 +168,7 @@ public class ShoppingListScreen extends ScreenContainer {
         return builder.build();
     }
 
-    /** 装配一行单元格（九列：序号/图标/名称/ID/详情/现有/需求/冗余/操作）。 */
+    /** 装配一行单元格（八列：序号/图标/名称/ID/详情/现有/需求/冗余）。 */
     private void appendRow(TableLayoutBuilder builder, ShoppingItem item, int index,
                            int redundancy, int haveFallback) {
         ItemStack stack = this.stackOf(item);
@@ -182,7 +176,7 @@ public class ShoppingListScreen extends ScreenContainer {
         String id = item.getId();
 
         TableLayoutBuilder.RowBuilder row = builder.addRow();
-        row.text(Text.literal(String.valueOf(index + 1)), COLOR_GRAY);
+        row.blank(); // 序号列：拖拽手柄字符由 TableLayout 按手柄列渲染
         row.item(stack);
         row.text(stack.getName(), 0xFFFFFFFF);
         if (id == null || id.isBlank()) {
@@ -196,10 +190,6 @@ public class ShoppingListScreen extends ScreenContainer {
         row.text(Text.literal(String.valueOf(item.getCount())), COLOR_YELLOW)
                 .editable(String.valueOf(item.getCount()), v -> this.commitCount(item, v));
         row.text(Text.literal("+" + redundancy), COLOR_LIGHT_BLUE);
-        row.blank(); // 操作列占位
-        row.button(Text.literal("↑"), () -> this.moveUp(index));
-        row.button(Text.literal("↓"), () -> this.moveDown(index));
-        row.button(Text.literal("×"), () -> this.removeItem(index), COLOR_DELETE_HOVER);
         row.done();
     }
 
@@ -240,7 +230,7 @@ public class ShoppingListScreen extends ScreenContainer {
 
     /* ---- 行内编辑（点击「需求」列进入） ---- */
 
-    /** 需求数量提交：非法输入忽略（表格重建后自动恢复原值显示），合法则写回并刷新显示。 */
+    /** 需求数量提交：非法输入重建表格恢复原值显示（此时已离开编辑态，重建安全），合法则只写回不重建。 */
     private void commitCount(ShoppingItem item, String text) {
         String t = text == null ? "" : text.trim();
         int value = -1;
@@ -252,26 +242,24 @@ public class ShoppingListScreen extends ScreenContainer {
             }
         }
         if (value < 0) {
+            // 非法输入：editable 值已被编辑框覆盖，重建表格恢复模型原值显示
+            this.rebuildKeepScroll();
             return;
         }
         item.setCount(value);
-        this.rebuildKeepScroll();
+        // 合法提交：只更新模型不重建表格，编辑切换/滚动位置保持连续
     }
 
-    /* ---- 行操作 ---- */
+    /* ---- 行操作（拖拽回调） ---- */
 
-    public void moveUp(int index) {
+    /** 拖拽排序：将 from 行移动到 to 位置后重建表格（保持滚动位置）。 */
+    public void moveItem(int from, int to) {
         this.layout.cancelEdit();
-        this.source.moveUp(index);
+        this.source.move(from, to);
         this.rebuildKeepScroll();
     }
 
-    public void moveDown(int index) {
-        this.layout.cancelEdit();
-        this.source.moveDown(index);
-        this.rebuildKeepScroll();
-    }
-
+    /** 拖出列表删除行。 */
     public void removeItem(int index) {
         this.layout.cancelEdit();
         this.source.remove(index);
