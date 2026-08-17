@@ -115,8 +115,9 @@ public class ShoppingListScreen extends ScreenContainer {
         this.layout = this.buildLayout();
         this.setLayout(this.layout);
         super.init();
-        // ScreenContainer.init 将根节点铺满全屏；表格需让出标题/表头与底部按钮区
-        this.layout.setBounds(0, HEADER_Y, this.width, this.height - FOOTER_H);
+        // ScreenContainer.init 将根节点铺满全屏；表格需让出标题/表头与底部按钮区，
+        // 高度 = 屏幕高 - 顶部表头区 - 底部按钮区，避免行内容与按钮重叠。
+        this.layout.setBounds(0, HEADER_Y, this.width, this.height - HEADER_Y - FOOTER_H);
         this.layout.reflow(this.width);
     }
 
@@ -131,7 +132,7 @@ public class ShoppingListScreen extends ScreenContainer {
     private void rebuildKeepScroll() {
         int scroll = this.layout.getScrollOffset();
         this.layout = this.buildLayout();
-        this.layout.setBounds(0, HEADER_Y, this.width, this.height - FOOTER_H);
+        this.layout.setBounds(0, HEADER_Y, this.width, this.height - HEADER_Y - FOOTER_H);
         this.layout.reflow(this.width);
         this.layout.setScrollOffset(scroll);
         this.setLayout(this.layout);
