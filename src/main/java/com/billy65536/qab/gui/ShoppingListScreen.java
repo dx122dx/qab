@@ -100,6 +100,11 @@ public class ShoppingListScreen extends ScreenContainer {
 
     @Override
     protected void init() {
+        if (this.isErrorState()) {
+            // 错误隔离态：不重建业务布局，仅由 ScreenContainer 重排错误界面
+            super.init();
+            return;
+        }
         this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("qab.msg.list_gui.back"), b -> this.closeScreen())
                 .dimensions(8, this.height - 24, 80, 20).build());
@@ -305,6 +310,9 @@ public class ShoppingListScreen extends ScreenContainer {
     @Override
     public void tick() {
         super.tick();
+        if (this.isErrorState()) {
+            return; // 错误隔离态：停止业务刷新
+        }
         if (++this.haveTick % HAVE_REFRESH_TICKS == 0) {
             this.refreshHaveCounts();
         }
@@ -333,6 +341,9 @@ public class ShoppingListScreen extends ScreenContainer {
     @Override
     public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
         super.render(ctx, mouseX, mouseY, delta); // 背景 + 表格 + 布局 tooltip
+        if (this.isErrorState()) {
+            return; // 错误隔离态：super.render 已渲染全屏错误详情，不再画业务标题与按钮
+        }
         this.renderTitleHeader(ctx);
         this.renderWidgets(ctx, mouseX, mouseY, delta); // 底部按钮
     }
