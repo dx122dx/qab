@@ -16,6 +16,12 @@ import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 
+import org.jetbrains.annotations.Nullable;
+import org.lwjgl.glfw.GLFW;
+
+import dev.lambdaurora.spruceui.Position;
+import dev.lambdaurora.spruceui.widget.text.SpruceTextFieldWidget;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -28,15 +34,27 @@ import java.util.Map;
  * {@link com.billy65536.qab.planner.model.ShoppingList} 与持久化细节；将来
  * 「计划查看/编辑」可传入其它 IListSource 实现复用本界面。</p>
  *
- * <p>顶部标题 + 金色分隔线 + 表头，中部 TableLayout 滚动列表
- * （拖拽手柄 → 图标 → 名称/ID/详情 → 现有/需求/冗余数量），
+ * <p>顶部标题 + 金色分隔线 + 全局设置行（倍率 / 冗余率%，点击进入编辑）+ 表头，
+ * 中部 TableLayout 滚动列表（拖拽手柄 → 图标 → 名称/ID/详情 → 现有/需求/冗余数量），
  * 底部「返回」「保存」按钮。列宽由 TableLayout#reflow 按内容测量与权重分配；
  * 「需求」列行内编辑由 TableLayout 编辑框托管，事件经 ScreenContainer 递归分发；
+ * 「冗余」列按全局倍率/冗余率% 动态显示（y=0 → "+x"，y≠0 → "y+x"）；
  * 行首手柄列支持拖拽排序（拖动到列表外释放删除行）。</p>
  */
 public class ShoppingListScreen extends ScreenContainer {
-    /** 列表顶部（标题 + 表头区）高度。 */
-    public static final int HEADER_Y = 36;
+    /** 列表顶部（标题 + 全局设置行 + 表头区）高度。 */
+    public static final int HEADER_Y = 56;
+    /** 全局设置行顶部 y（标题分隔线下）。 */
+    public static final int SETTINGS_ROW_Y = 28;
+    /** 全局设置行高度。 */
+    public static final int SETTINGS_ROW_H = 20;
+    /** 两个设置格之间的间距。 */
+    public static final int SETTINGS_CELL_GAP = 24;
+    /** 设置格文字两侧留白（加大点击命中区域）。 */
+    public static final int SETTINGS_CELL_PAD = 16;
+    /** 全局设置行语言键。 */
+    public static final String KEY_G_MULTIPLIER = "qab.msg.list_gui.g_multiplier";
+    public static final String KEY_G_REDUNDANCY_PERCENT = "qab.msg.list_gui.g_redundancy_percent";
     /** 底部按钮区高度。 */
     public static final int FOOTER_H = 28;
     /** 行高。 */
@@ -74,6 +92,16 @@ public class ShoppingListScreen extends ScreenContainer {
     private int haveTick;
 
     private TableLayout layout;
+
+    /** 全局设置行正在编辑的字段（倍率 / 冗余率%），null 表示未在编辑。 */
+    @Nullable private SpruceTextFieldWidget settingsEditor;
+    @Nullable private SettingsField settingsEditorKind;
+
+    /** 全局设置行可编辑字段。 */
+    private enum SettingsField {
+        MULTIPLIER,
+        REDUNDANCY_PERCENT,
+    }
 
     public ShoppingListScreen(IListSource<ShoppingItem> source, Screen parent) {
         super(Text.literal(listTitle(source)));
@@ -121,6 +149,21 @@ public class ShoppingListScreen extends ScreenContainer {
         return this.source instanceof ShoppingListSource s ? s.getList().getRedundancy() : 0;
     }
 
+    /** 全局倍率（来自 ShoppingListSource 的清单配置，其它数据源返回 1）。 */
+    private double getMultiplier() {
+        return this.source instanceof ShoppingListSource s ? s.getList().getMultiplier() : 1.0;
+    }
+
+    /** 全局冗余率%（来自 ShoppingListSource 的清单配置，其它数据源返回 0）。 */
+    private double getRedundancyPercent() {
+        return this.source instanceof ShoppingListSource s ? s.getList().getRedundancyPercent() : 0.0;
+    }
+
+    /** 全局设置行是否可见（仅购物清单数据源展示倍率/冗余率%）。 */
+    private boolean settingsRowVisible() {
+        return this.source instanceof ShoppingListSource;
+    }
+
     /** 重建表格（行操作/合法编辑提交后调用，保持滚动位置）。 */
     private void rebuildKeepScroll() {
         int scroll = this.layout.getScrollOffset();
@@ -133,8 +176,9 @@ public class ShoppingListScreen extends ScreenContainer {
 
     private TableLayout buildLayout() {
         List<ShoppingItem> items = this.source.getItems();
-        int redundancy = this.getRedundancy();
         int haveFallback = this.textRenderer.getWidth("9999") + 10;
+        // 冗余列可能显示「y+x」，按最宽形态预留列宽避免渲染时抖动
+        int redunFallback = this.textRenderer.getWidth("9999+9999") + 10;
 
         String[] headers = new String[HEADER_KEYS.length];
         for (int i = 0; i < HEADER_KEYS.length; i++) {
@@ -162,7 +206,7 @@ public class ShoppingListScreen extends ScreenContainer {
                 if (item == null) {
                     continue;
                 }
-                this.appendRow(builder, item, i, redundancy, haveFallback);
+                this.appendRow(builder, item, i, haveFallback, redunFallback);
             }
         }
         return builder.build();
@@ -170,7 +214,7 @@ public class ShoppingListScreen extends ScreenContainer {
 
     /** 装配一行单元格（八列：序号/图标/名称/ID/详情/现有/需求/冗余）。 */
     private void appendRow(TableLayoutBuilder builder, ShoppingItem item, int index,
-                           int redundancy, int haveFallback) {
+                           int haveFallback, int redunFallback) {
         ItemStack stack = this.stackOf(item);
         List<String> details = this.detailsOf(item);
         String id = item.getId();
@@ -189,8 +233,27 @@ public class ShoppingListScreen extends ScreenContainer {
                 COLOR_GREEN, TableLayout.ColumnSpec.Align.CENTER, haveFallback));
         row.text(Text.literal(String.valueOf(item.getCount())), COLOR_YELLOW)
                 .editable(String.valueOf(item.getCount()), v -> this.commitCount(item, v));
-        row.text(Text.literal("+" + redundancy), COLOR_LIGHT_BLUE);
+        // 冗余列动态显示：y（固定冗余）=0 → "+x"，否则 "y+x"（x 为比率冗余）
+        row.cell(DynamicTextCell.of(() -> this.redundancyText(item),
+                COLOR_LIGHT_BLUE, TableLayout.ColumnSpec.Align.CENTER, redunFallback));
         row.done();
+    }
+
+    /** 冗余列文本（按全局倍率/冗余率% 与固定冗余实时计算）。 */
+    private String redundancyText(ShoppingItem item) {
+        int fixed = this.getRedundancy();
+        int ratio = this.ratioRedundancyOf(item);
+        return fixed == 0 ? "+" + ratio : fixed + "+" + ratio;
+    }
+
+    /** 比率冗余 = round(需求 × 冗余率%)，需求 = round(数量 × 倍率)。 */
+    private int ratioRedundancyOf(ShoppingItem item) {
+        double percent = this.getRedundancyPercent();
+        if (percent <= 0) {
+            return 0;
+        }
+        int demand = (int) Math.round(item.getCount() * this.getMultiplier());
+        return (int) Math.round(demand * percent / 100.0);
     }
 
     /** 构造物品 ItemStack（非法 ID 返回 EMPTY）。 */
@@ -248,6 +311,174 @@ public class ShoppingListScreen extends ScreenContainer {
         }
         item.setCount(value);
         // 合法提交：只更新模型不重建表格，编辑切换/滚动位置保持连续
+    }
+
+    /* ---- 全局设置行（倍率 / 冗余率% 点击编辑） ---- */
+
+    /** 数字友好格式：整数值去掉小数尾（1.0 → "1"，1.5 → "1.5"）。 */
+    private static String fmtDouble(double v) {
+        if (v == Math.floor(v) && !Double.isInfinite(v)
+                && v >= Long.MIN_VALUE && v <= Long.MAX_VALUE) {
+            return String.valueOf((long) v);
+        }
+        return String.valueOf(v);
+    }
+
+    /** 设置字段当前值（取自清单模型）。 */
+    private double settingsValue(SettingsField kind) {
+        return kind == SettingsField.MULTIPLIER ? this.getMultiplier() : this.getRedundancyPercent();
+    }
+
+    /** 设置字段标签文本（不含冒号，本地化）。 */
+    private String settingsLabel(SettingsField kind) {
+        return Text.translatable(kind == SettingsField.MULTIPLIER
+                ? KEY_G_MULTIPLIER : KEY_G_REDUNDANCY_PERCENT).getString();
+    }
+
+    /** 设置格矩形（屏幕坐标）：{x, y, w, h}，按「标签: 数字」整体宽度居中计算。 */
+    private int[] settingsCellRect(SettingsField kind) {
+        int textW = this.textRenderer.getWidth(this.settingsLabel(kind) + ": "
+                + fmtDouble(this.settingsValue(kind)));
+        int cellW = textW + SETTINGS_CELL_PAD;
+        int totalW = cellW * 2 + SETTINGS_CELL_GAP;
+        int startX = (this.width - totalW) / 2;
+        int x = kind == SettingsField.MULTIPLIER ? startX : startX + cellW + SETTINGS_CELL_GAP;
+        return new int[]{x, SETTINGS_ROW_Y, cellW, SETTINGS_ROW_H};
+    }
+
+    /** 「标签: 数字」整体居中后的起始 x（整格内）。 */
+    private int settingsTextStartX(SettingsField kind) {
+        int[] r = this.settingsCellRect(kind);
+        String label = this.settingsLabel(kind) + ": ";
+        String value = fmtDouble(this.settingsValue(kind));
+        int textW = this.textRenderer.getWidth(label) + this.textRenderer.getWidth(value);
+        return r[0] + (r[2] - textW) / 2;
+    }
+
+    /** 设置格内标签子矩形（屏幕坐标）：{x, y, w, h}，含「: 」（编辑时恒显示）。 */
+    private int[] settingsLabelRect(SettingsField kind) {
+        int[] r = this.settingsCellRect(kind);
+        String label = this.settingsLabel(kind) + ": ";
+        return new int[]{this.settingsTextStartX(kind), r[1], this.textRenderer.getWidth(label), r[3]};
+    }
+
+    /** 设置格内数字子矩形（屏幕坐标）：{x, y, w, h}，编辑框只覆盖此区域。 */
+    private int[] settingsValueRect(SettingsField kind) {
+        int[] lr = this.settingsLabelRect(kind);
+        String value = fmtDouble(this.settingsValue(kind));
+        return new int[]{lr[0] + lr[2], lr[1], this.textRenderer.getWidth(value), lr[3]};
+    }
+
+    /** 命中检测：返回鼠标所在设置字段，未命中或设置行不可见返回 null。 */
+    @Nullable
+    private SettingsField hitSettingsCell(double mouseX, double mouseY) {
+        if (!this.settingsRowVisible()) {
+            return null;
+        }
+        if (mouseY < SETTINGS_ROW_Y || mouseY >= SETTINGS_ROW_Y + SETTINGS_ROW_H) {
+            return null;
+        }
+        for (SettingsField kind : SettingsField.values()) {
+            int[] r = this.settingsCellRect(kind);
+            if (mouseX >= r[0] && mouseX < r[0] + r[2]) {
+                return kind;
+            }
+        }
+        return null;
+    }
+
+    /** 打开对应设置字段的编辑框（仅覆盖数字子区域，标签保持显示）。 */
+    private void startSettingsEditor(SettingsField kind) {
+        if (this.settingsEditor != null) {
+            this.removeSettingsEditor();
+        }
+        int[] r = this.settingsValueRect(kind);
+        // 编辑框比数字略宽（左右各留白），避免输入时文字顶格
+        SpruceTextFieldWidget field = new SpruceTextFieldWidget(
+                Position.of(r[0] - 4, r[1]), r[2] + 8, r[3], Text.empty());
+        field.setText(fmtDouble(this.settingsValue(kind)));
+        this.addDrawableChild(field);
+        // SpruceScreen.setFocused 同时设置屏幕级聚焦与 widget 级聚焦，
+        // 键盘/字符事件经 Screen 分发到 focused child 到达编辑框
+        this.setFocused(field);
+        this.settingsEditor = field;
+        this.settingsEditorKind = kind;
+    }
+
+    /** 提交当前设置编辑：解析 double，非法或 <0 放弃（文本格回落模型值），合法则写回。 */
+    private void commitSettingsEditor() {
+        if (this.settingsEditor == null || this.settingsEditorKind == null) {
+            return;
+        }
+        String text = this.settingsEditor.getText();
+        double value;
+        try {
+            value = Double.parseDouble(text.trim());
+        } catch (NumberFormatException ignored) {
+            value = Double.NaN;
+        }
+        if (Double.isFinite(value) && value >= 0) {
+            if (this.settingsEditorKind == SettingsField.MULTIPLIER) {
+                ((ShoppingListSource) this.source).getList().setMultiplier(value);
+            } else {
+                ((ShoppingListSource) this.source).getList().setRedundancyPercent(value);
+            }
+        }
+        this.removeSettingsEditor();
+    }
+
+    /** 取消当前设置编辑（Esc，不写回）。 */
+    private void cancelSettingsEditor() {
+        this.removeSettingsEditor();
+    }
+
+    /** 卸载编辑框并释放聚焦。 */
+    private void removeSettingsEditor() {
+        if (this.settingsEditor == null) {
+            return;
+        }
+        this.setFocused(null);
+        this.remove(this.settingsEditor);
+        this.settingsEditor = null;
+        this.settingsEditorKind = null;
+    }
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button != 0) {
+            return super.mouseClicked(mouseX, mouseY, button);
+        }
+        if (this.settingsEditor != null) {
+            int[] r = this.settingsCellRect(this.settingsEditorKind);
+            if (mouseX >= r[0] && mouseX < r[0] + r[2]
+                    && mouseY >= r[1] && mouseY < r[1] + r[3]) {
+                // 点击编辑框内：交给编辑框处理（光标定位），不提交
+                return super.mouseClicked(mouseX, mouseY, button);
+            }
+            // 点击其它区域：先提交当前编辑（与表格行内编辑行为一致）
+            this.commitSettingsEditor();
+        }
+        SettingsField hit = this.hitSettingsCell(mouseX, mouseY);
+        if (hit != null) {
+            this.startSettingsEditor(hit);
+            return true;
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (this.settingsEditor != null) {
+            if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+                this.commitSettingsEditor();
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                this.cancelSettingsEditor();
+                return true;
+            }
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
     /* ---- 行操作（拖拽回调） ---- */
@@ -337,7 +568,7 @@ public class ShoppingListScreen extends ScreenContainer {
         this.renderWidgets(ctx, mouseX, mouseY, delta); // 底部按钮
     }
 
-    /** 标题（2 倍放大居中）+ 金色细分隔线。 */
+    /** 标题（2 倍放大居中）+ 金色细分隔线 + 全局设置行（倍率 / 冗余率%）。 */
     private void renderTitleHeader(DrawContext graphics) {
         var matrices = graphics.getMatrices();
         matrices.push();
@@ -345,5 +576,23 @@ public class ShoppingListScreen extends ScreenContainer {
         graphics.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 4, 2, 0xFFFFFFFF);
         matrices.pop();
         graphics.fill(0, 24, this.width, 25, 0xFFFFAA00);
+        if (this.settingsRowVisible()) {
+            this.renderSettingsRow(graphics);
+        }
+    }
+
+    /** 绘制全局设置行：标签（含冒号）恒显示；数字未编辑时绘制，编辑时由编辑框接管。 */
+    private void renderSettingsRow(DrawContext graphics) {
+        for (SettingsField kind : SettingsField.values()) {
+            int[] lr = this.settingsLabelRect(kind);
+            graphics.drawTextWithShadow(this.textRenderer, Text.literal(this.settingsLabel(kind) + ": "),
+                    lr[0], lr[1] + (lr[3] - 8) / 2, 0xFFFFFFFF);
+            if (this.settingsEditorKind == kind && this.settingsEditor != null) {
+                continue; // 数字由编辑框接管，不重复绘制
+            }
+            int[] vr = this.settingsValueRect(kind);
+            graphics.drawTextWithShadow(this.textRenderer, Text.literal(fmtDouble(this.settingsValue(kind))),
+                    vr[0], vr[1] + (vr[3] - 8) / 2, 0xFFFFFFFF);
+        }
     }
 }

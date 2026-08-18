@@ -32,7 +32,10 @@ public class ShoppingPlanner {
     public static ShoppingPlan generatePlan(ShoppingList list, ShopExportData export,
                                             RegionTable regionTable) {
         ShoppingPlan plan = new ShoppingPlan();
-        int redundancy = Math.max(0, list.getRedundancy());
+        // 全局设置：固定冗余量、数量倍率、冗余率（百分比数值），负值一律按 0 处理
+        int fixedRedundancy = Math.max(0, list.getRedundancy());
+        double multiplier = Math.max(0.0, list.getMultiplier());
+        double redundancyPercent = Math.max(0.0, list.getRedundancyPercent());
 
         if (list.getItems() == null || list.getItems().isEmpty()) {
             return plan;
@@ -41,7 +44,7 @@ public class ShoppingPlanner {
         Map<String, List<ShopExportEntry>> shopsByItem = buildShopIndex(export);
 
         for (ShoppingItem item : list.getItems()) {
-            processItem(item, redundancy, shopsByItem, plan);
+            processItem(item, multiplier, redundancyPercent, fixedRedundancy, shopsByItem, plan);
         }
 
         // 将总成本四舍五入到小数点后两位。
@@ -75,20 +78,28 @@ public class ShoppingPlanner {
 
     /**
      * 处理单个购物清单项目：查找匹配的商店，分配购买。
+     * <p>计算规则：需求 = round(需求数 × 倍率)，比率冗余 = round(需求 × 冗余率%)，
+     * 每项冗余 = 比率冗余 + 固定冗余量，购买 = 需求 + 冗余。
      */
-    private static void processItem(ShoppingItem item, int redundancy,
-                                     Map<String, List<ShopExportEntry>> shopsByItem,
-                                     ShoppingPlan plan) {
+    private static void processItem(ShoppingItem item, double multiplier, double redundancyPercent,
+                                    int fixedRedundancy,
+                                    Map<String, List<ShopExportEntry>> shopsByItem,
+                                    ShoppingPlan plan) {
         String itemId = item.getId();
         List<ShopExportEntry> candidates = shopsByItem.getOrDefault(itemId, Collections.emptyList());
 
         // 按匹配条件筛选候选
         List<ShopExportEntry> matched = filterMatchingShops(item, candidates);
 
-        // 按价格降序升序排序
+        // 按价格升序排序（最便宜的在最前）
         matched.sort(Comparator.comparingInt(ShopExportEntry::getPrice));
 
-        int needed = item.getCount() + redundancy;
+        // 计算规则：需求 = round(需求数 × 倍率)，比率冗余 = round(需求 × 冗余率%)，
+        // 每项冗余 = 比率冗余 + 固定冗余量，购买 = 需求 + 冗余
+        int demand = (int) Math.round(item.getCount() * multiplier);
+        int ratioRedundancy = (int) Math.round(demand * redundancyPercent / 100.0);
+        int redundancyPerItem = ratioRedundancy + fixedRedundancy;
+        int needed = demand + redundancyPerItem;
         int allocatedCount = 0;
         int allocatedRedundancy = 0;
 
@@ -100,10 +111,10 @@ public class ShoppingPlanner {
 
             int take = Math.min(available, needed);
 
-            // 分配：首先满足 count ，然后满足 redundancy
+            // 分配：首先满足需求，然后满足冗余
             int takeCount = 0;
             int takeRedundancy = 0;
-            int remainingCount = item.getCount() - allocatedCount;
+            int remainingCount = demand - allocatedCount;
             if (remainingCount > 0) {
                 takeCount = Math.min(take, remainingCount);
                 take -= takeCount;
@@ -124,17 +135,17 @@ public class ShoppingPlanner {
             }
         }
 
-        // 检查 count 是否完全满足
-        if (allocatedCount < item.getCount()) {
-            int remaining = item.getCount() - allocatedCount;
+        // 检查需求是否完全满足
+        if (allocatedCount < demand) {
+            int remaining = demand - allocatedCount;
             ShoppingItem failItem = cloneItem(item);
             failItem.setCount(remaining);
             plan.addFailed(new FailedWarnEntry(failItem, remaining, 0));
         }
 
-        // 检查 redundancy 是否已完全满足。
-        int unfulfilledRedundancy = redundancy - allocatedRedundancy;
-        if (allocatedCount >= item.getCount() && unfulfilledRedundancy > 0) {
+        // 检查冗余是否已完全满足
+        int unfulfilledRedundancy = redundancyPerItem - allocatedRedundancy;
+        if (allocatedCount >= demand && unfulfilledRedundancy > 0) {
             ShoppingItem warnItem = cloneItem(item);
             plan.addWarn(new FailedWarnEntry(warnItem, 0, unfulfilledRedundancy));
         }
