@@ -12,12 +12,14 @@ import java.util.List;
  * 保存时以 Gson pretty 格式写回 JSON（与命令层持久化约定一致）。
  *
  * <p>加载复用 {@link QabCommands#loadShoppingList(Path)}，避免两处解析逻辑。
- * 将来「计划查看/编辑」可新增独立的 IListSource 实现复用同一套界面。</p>
+ * 支持临时模式：{@code path == null} 表示仅内存清单（从计划转换而来），
+ * 此时 {@link #save()} 返回 false、{@link #isPersistable()} 返回 false，
+ * 屏幕层据此禁用「保存」按钮。</p>
  */
 public class ShoppingListSource implements IListSource<ShoppingItem> {
 
     private final ShoppingList list;
-    private final Path path;
+    private Path path;
 
     public ShoppingListSource(ShoppingList list, Path path) {
         this.list = list;
@@ -60,6 +62,42 @@ public class ShoppingListSource implements IListSource<ShoppingItem> {
 
     @Override
     public boolean save() {
+        // 临时内存清单不允许直接落盘（防止误覆盖正式文件），必须经 saveAs 另存
+        if (path == null) {
+            return false;
+        }
         return QabCommands.saveShoppingList(path, list);
+    }
+
+    @Override
+    public String getName() {
+        return list.getName();
+    }
+
+    @Override
+    public String getDescription() {
+        return list.getDescription();
+    }
+
+    @Override
+    public boolean isPersistable() {
+        return path != null;
+    }
+
+    @Override
+    public boolean saveAs(String name) {
+        Path target = QabCommands.saveShoppingListAs(list, name);
+        if (target == null) {
+            return false;
+        }
+        // 另存成功后同步指向新路径，后续 save() 落到新位置
+        this.path = target;
+        return true;
+    }
+
+    @Override
+    public void updateMeta(String name, String description) {
+        list.setName(name);
+        list.setDescription(description);
     }
 }

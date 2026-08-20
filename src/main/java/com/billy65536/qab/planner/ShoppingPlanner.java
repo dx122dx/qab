@@ -32,6 +32,9 @@ public class ShoppingPlanner {
     public static ShoppingPlan generatePlan(ShoppingList list, ShopExportData export,
                                             RegionTable regionTable) {
         ShoppingPlan plan = new ShoppingPlan();
+        // 计划元数据直接复制购物清单的 name/desc，供计划 GUI 标题与编辑页使用。
+        plan.setName(list.getName());
+        plan.setDescription(list.getDescription());
         // 全局设置：固定冗余量、数量倍率、冗余率（百分比数值），负值一律按 0 处理
         int fixedRedundancy = Math.max(0, list.getRedundancy());
         double multiplier = Math.max(0.0, list.getMultiplier());
@@ -94,8 +97,6 @@ public class ShoppingPlanner {
         // 按价格升序排序（最便宜的在最前）
         matched.sort(Comparator.comparingInt(ShopExportEntry::getPrice));
 
-        // 计算规则：需求 = round(需求数 × 倍率)，比率冗余 = round(需求 × 冗余率%)，
-        // 每项冗余 = 比率冗余 + 固定冗余量，购买 = 需求 + 冗余
         int demand = (int) Math.round(item.getCount() * multiplier);
         int ratioRedundancy = (int) Math.round(demand * redundancyPercent / 100.0);
         int redundancyPerItem = ratioRedundancy + fixedRedundancy;

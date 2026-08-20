@@ -4,7 +4,7 @@ import java.util.List;
 
 /**
  * 列表类数据源抽象：{@link ShoppingListScreen} 只依赖本接口渲染与操作列表，
- * 不关心具体数据来自购物清单还是将来的购物计划，便于复用同一套查看/编辑界面。
+ * 不关心具体数据来自购物清单还是购物计划，便于复用同一套查看/编辑界面。
  *
  * <p>行操作（拖拽移动/拖出删除）与保存均委托给数据源实现，
  * 屏幕层不直接触碰持久化细节。</p>
@@ -54,4 +54,44 @@ public interface IListSource<T> {
      * @return 是否写回成功
      */
     boolean save();
+
+    /**
+     * 列表显示名（如购物清单 name / 计划 name）。
+     * <p>返回 null 时由屏幕层回退到默认翻译键标题。</p>
+     */
+    default String getName() {
+        return null;
+    }
+
+    /**
+     * 列表描述（可多行）；无描述时返回 null。
+     */
+    default String getDescription() {
+        return null;
+    }
+
+    /**
+     * 是否可持久化到磁盘。
+     * <p>false 表示临时内存清单（如从计划转换而来），此时屏幕层应禁用「保存」按钮。</p>
+     */
+    default boolean isPersistable() {
+        return true;
+    }
+
+    /**
+     * 另存为：以新名字写入正式目录（所有清单均可调用）。
+     * <p>成功后实现方应同步更新内部路径，使后续 {@link #save()} 落到新位置。</p>
+     *
+     * @param name 新文件名（不含或含 .json 均可，实现方负责清洗补全）
+     * @return 是否保存成功
+     */
+    default boolean saveAs(String name) {
+        return false;
+    }
+
+    /**
+     * 更新 name/desc 元数据（由 name/desc 编辑页保存时调用），不落盘。
+     */
+    default void updateMeta(String name, String description) {
+    }
 }

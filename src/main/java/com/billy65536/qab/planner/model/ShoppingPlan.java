@@ -24,6 +24,14 @@ public class ShoppingPlan {
     @SerializedName("version")
     private int version;
 
+    /** 计划显示名（生成时复制购物清单的 name；旧计划文件缺失时按 null 兼容处理）。 */
+    @SerializedName("name")
+    private String name;
+
+    /** 计划描述（生成时复制购物清单的 description；可多行，缺失按 null 兼容）。 */
+    @SerializedName("description")
+    private String description;
+
     @SerializedName("totalCost")
     private double totalCost;
 
@@ -64,6 +72,22 @@ public class ShoppingPlan {
 
     public void setVersion(int version) {
         this.version = version;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
     }
 
     public double getTotalCost() {

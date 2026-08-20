@@ -5,8 +5,10 @@ import com.billy65536.infrastructure.core.gui.layout.DynamicTextCell;
 import com.billy65536.infrastructure.core.gui.layout.MultiLineTextCell;
 import com.billy65536.infrastructure.core.gui.layout.TableLayout;
 import com.billy65536.infrastructure.core.gui.layout.TableLayoutBuilder;
+import com.billy65536.qab.QabCommands;
 import com.billy65536.qab.automatic.InventoryCapacityCalculator;
 import com.billy65536.qab.planner.model.ShoppingItem;
+import com.billy65536.qab.planner.model.ShoppingList;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
@@ -34,9 +36,12 @@ import java.util.Map;
  * {@link com.billy65536.qab.planner.model.ShoppingList} 与持久化细节；将来
  * 「计划查看/编辑」可传入其它 IListSource 实现复用本界面。</p>
  *
- * <p>顶部标题 + 金色分隔线 + 全局设置行（倍率 / 冗余率%，点击进入编辑）+ 表头，
+ * <p>顶部标题 + 标题右侧「编辑」按钮（进入 {@link MetaEditScreen} 改 name/desc）
+ * + 金色分隔线 + 全局设置行（倍率 / 冗余率%，点击进入编辑）+ 表头，
  * 中部 TableLayout 滚动列表（拖拽手柄 → 图标 → 名称/ID/详情 → 现有/需求/冗余数量），
- * 底部「返回」「保存」按钮。列宽由 TableLayout#reflow 按内容测量与权重分配；
+ * 底部「返回」「另存为」「立即生成」「保存」按钮（临时内存清单禁用「保存」，
+ * 另存为成功后刷新为可用）。
+ * 列宽由 TableLayout#reflow 按内容测量与权重分配；
  * 「需求」列行内编辑由 TableLayout 编辑框托管，事件经 ScreenContainer 递归分发；
  * 「冗余」列按全局倍率/冗余率% 动态显示（y=0 → "+x"，y≠0 → "y+x"）；
  * 行首手柄列支持拖拽排序（拖动到列表外释放删除行）。</p>
@@ -97,6 +102,11 @@ public class ShoppingListScreen extends ScreenContainer {
     @Nullable private SpruceTextFieldWidget settingsEditor;
     @Nullable private SettingsField settingsEditorKind;
 
+    /** 「保存」按钮引用（另存为成功后临时清单转为正式，需刷新可用状态）。 */
+    private ButtonWidget saveButton;
+    /** 「另存为」命名输入框，null 表示未在输入。 */
+    @Nullable private SpruceTextFieldWidget saveAsEditor;
+
     /** 全局设置行可编辑字段。 */
     private enum SettingsField {
         MULTIPLIER,
@@ -110,11 +120,9 @@ public class ShoppingListScreen extends ScreenContainer {
     }
 
     private static String listTitle(IListSource<ShoppingItem> source) {
-        if (source instanceof ShoppingListSource s) {
-            String name = s.getList().getName();
-            if (name != null && !name.isBlank()) {
-                return name;
-            }
+        String name = source.getName();
+        if (name != null && !name.isBlank()) {
+            return name;
         }
         return Text.translatable("qab.msg.list_gui.title").getString();
     }
@@ -129,9 +137,20 @@ public class ShoppingListScreen extends ScreenContainer {
         this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("qab.msg.list_gui.back"), b -> this.closeScreen())
                 .dimensions(8, this.height - 24, 80, 20).build());
+        // 底部按钮右对齐：另存为 | 立即生成 | 保存
         this.addDrawableChild(ButtonWidget.builder(
+                        Text.translatable("qab.msg.list_gui.save_as"), b -> this.startSaveAs())
+                .dimensions(this.width - 290, this.height - 24, 90, 20).build());
+        ButtonWidget generateButton = this.addDrawableChild(ButtonWidget.builder(
+                        Text.translatable("qab.msg.list_gui.generate_now"), b -> this.generateNow())
+                .dimensions(this.width - 194, this.height - 24, 90, 20).build());
+        // 立即生成依赖底层 ShoppingList（generateAndSavePlan 入参），仅购物清单源可用
+        generateButton.active = this.source instanceof ShoppingListSource;
+        this.saveButton = this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("qab.msg.list_gui.save"), b -> this.save())
-                .dimensions(this.width - 88, this.height - 24, 80, 20).build());
+                .dimensions(this.width - 98, this.height - 24, 90, 20).build());
+        // 临时内存清单（path 为 null）不可直接保存，只能另存为
+        this.saveButton.active = this.source.isPersistable();
 
         this.layout = this.buildLayout();
         this.setLayout(this.layout);
@@ -448,6 +467,21 @@ public class ShoppingListScreen extends ScreenContainer {
         if (button != 0) {
             return super.mouseClicked(mouseX, mouseY, button);
         }
+        if (this.hitEditBtn(mouseX, mouseY)) {
+            this.openMetaEdit();
+            return true;
+        }
+        if (this.saveAsEditor != null) {
+            int sx = this.saveAsEditor.getX();
+            int sy = this.saveAsEditor.getY();
+            int sw = this.saveAsEditor.getWidth();
+            if (mouseX >= sx && mouseX < sx + sw && mouseY >= sy && mouseY < sy + 20) {
+                // 点击输入框内：交给编辑框处理（光标定位），不提交
+                return super.mouseClicked(mouseX, mouseY, button);
+            }
+            // 点击其它区域：取消另存为（避免误提交写盘）
+            this.cancelSaveAs();
+        }
         if (this.settingsEditor != null) {
             int[] r = this.settingsCellRect(this.settingsEditorKind);
             if (mouseX >= r[0] && mouseX < r[0] + r[2]
@@ -468,6 +502,16 @@ public class ShoppingListScreen extends ScreenContainer {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (this.saveAsEditor != null) {
+            if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+                this.commitSaveAs();
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                this.cancelSaveAs();
+                return true;
+            }
+        }
         if (this.settingsEditor != null) {
             if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
                 this.commitSettingsEditor();
@@ -498,11 +542,6 @@ public class ShoppingListScreen extends ScreenContainer {
     }
 
     /* ---- 现有数量（每 10 tick 刷新） ---- */
-
-    public int getHaveCount(String itemId) {
-        Integer count = this.haveCache.get(itemId);
-        return count == null ? -1 : count;
-    }
 
     private String haveText(String itemId) {
         int have = this.haveCache.getOrDefault(itemId, -1);
@@ -538,6 +577,107 @@ public class ShoppingListScreen extends ScreenContainer {
         }
     }
 
+    /* ---- 标题「编辑」按钮 ---- */
+
+    /** 打开统一 name/desc 编辑页（MetaEditScreen），返回后回本屏。 */
+    private void openMetaEdit() {
+        this.client.send(() -> this.client.setScreen(new MetaEditScreen(this.source, this)));
+    }
+
+    private int[] editBtnRect() {
+        return TitleEditButton.rect(this.textRenderer, this.width, "qab.msg.list_gui.edit");
+    }
+
+    private boolean hitEditBtn(double mouseX, double mouseY) {
+        return TitleEditButton.hit(mouseX, mouseY, this.editBtnRect());
+    }
+
+    /* ---- 另存为 ---- */
+
+    /** 打开「另存为」命名输入框（预填当前清单名，Enter 提交 / Esc 或点击外部取消）。 */
+    private void startSaveAs() {
+        if (this.saveAsEditor != null) {
+            return;
+        }
+        // 另存为聚焦输入框前，先提交未完成的设置行编辑，避免焦点冲突
+        if (this.settingsEditor != null) {
+            this.commitSettingsEditor();
+        }
+        int w = Math.min(this.width - 200, 240);
+        int x = (this.width - w) / 2;
+        SpruceTextFieldWidget field = new SpruceTextFieldWidget(
+                Position.of(x, this.height - 56), w, 20,
+                Text.translatable("qab.msg.list_gui.save_as_prompt"));
+        String name = this.source.getName();
+        field.setText(name == null ? "" : name);
+        this.addDrawableChild(field);
+        this.setFocused(field);
+        this.saveAsEditor = field;
+    }
+
+    /** 提交另存为：写入正式目录（临时清单转为正式，保存按钮重新可用）。 */
+    private void commitSaveAs() {
+        if (this.saveAsEditor == null) {
+            return;
+        }
+        String name = this.saveAsEditor.getText().trim();
+        this.removeSaveAsEditor();
+        boolean ok = this.source.saveAs(name);
+        if (this.client.player != null) {
+            this.client.player.sendMessage(Text.translatable(ok
+                    ? "qab.msg.list_gui.save_success" : "qab.msg.list_gui.save_failed"), false);
+        }
+        if (ok) {
+            // 另存成功后源已指向正式文件，保存按钮恢复可用
+            this.saveButton.active = this.source.isPersistable();
+        }
+    }
+
+    /** 取消另存为（不写盘）。 */
+    private void cancelSaveAs() {
+        this.removeSaveAsEditor();
+    }
+
+    /** 卸载另存为输入框并释放聚焦。 */
+    private void removeSaveAsEditor() {
+        if (this.saveAsEditor == null) {
+            return;
+        }
+        this.setFocused(null);
+        this.remove(this.saveAsEditor);
+        this.saveAsEditor = null;
+    }
+
+    /* ---- 立即生成 ---- */
+
+    /** 用当前清单立即生成计划：调命令层公共生成核心，成功后切到 PlanScreen 展示。 */
+    private void generateNow() {
+        if (!(this.source instanceof ShoppingListSource s)) {
+            return;
+        }
+        ShoppingList list = s.getList();
+        String planName = list.getName();
+        if (planName == null || planName.isBlank()) {
+            planName = "plan"; // 清单未命名时的兜底计划名
+        }
+        final String finalName = planName;
+        QabCommands.GenerateResult result = QabCommands.generateAndSavePlan(list, finalName);
+        if (this.client.player != null) {
+            if (result.ok()) {
+                this.client.player.sendMessage(Text.translatable(
+                        "qab.msg.list_gui.generate_success", result.path().getFileName().toString()), false);
+            } else {
+                this.client.player.sendMessage(Text.translatable(
+                        result.errorKey() == null ? "qab.msg.list_gui.generate_failed" : result.errorKey(),
+                        result.errorArgs()), false);
+            }
+        }
+        if (result.ok() && result.plan() != null) {
+            // 成功后关闭当前 GUI，打开 PlanScreen 展示新计划（父屏幕为当前清单的返回目标）
+            this.client.send(() -> this.client.setScreen(new PlanScreen(result.plan(), finalName, this.parent)));
+        }
+    }
+
     /* ---- 保存 ---- */
 
     private void save() {
@@ -568,7 +708,7 @@ public class ShoppingListScreen extends ScreenContainer {
         this.renderWidgets(ctx, mouseX, mouseY, delta); // 底部按钮
     }
 
-    /** 标题（2 倍放大居中）+ 金色细分隔线 + 全局设置行（倍率 / 冗余率%）。 */
+    /** 标题（2 倍放大居中）+ 金色细分隔线 + 全局设置行（倍率 / 冗余率%）+ 右上角编辑按钮。 */
     private void renderTitleHeader(DrawContext graphics) {
         var matrices = graphics.getMatrices();
         matrices.push();
@@ -576,9 +716,15 @@ public class ShoppingListScreen extends ScreenContainer {
         graphics.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 4, 2, 0xFFFFFFFF);
         matrices.pop();
         graphics.fill(0, 24, this.width, 25, 0xFFFFAA00);
+        this.renderEditBtn(graphics);
         if (this.settingsRowVisible()) {
             this.renderSettingsRow(graphics);
         }
+    }
+
+    /** 绘制标题右侧「编辑」按钮（半透明底 + 文字居中）。 */
+    private void renderEditBtn(DrawContext graphics) {
+        TitleEditButton.render(graphics, this.textRenderer, this.width, "qab.msg.list_gui.edit");
     }
 
     /** 绘制全局设置行：标签（含冒号）恒显示；数字未编辑时绘制，编辑时由编辑框接管。 */

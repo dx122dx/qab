@@ -10,6 +10,7 @@ import com.billy65536.qab.automatic.ShoppingRunner;
 import com.billy65536.qab.config.QabConfig;
 import com.billy65536.qab.generator.ListGenConfig;
 import com.billy65536.qab.generator.SchematicListGenerator;
+import com.billy65536.qab.gui.PlanScreen;
 import com.billy65536.qab.gui.ShoppingListScreen;
 import com.billy65536.qab.gui.ShoppingListSource;
 import com.billy65536.qab.integration.CsNavigationHelper;
@@ -69,8 +70,8 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.lit
  *   /qab nav stash gui|add|remove &lt;index&gt;|list|clear
  * </pre>
  *
- * <p>TODO 除 {@code /qab list gui}（真实打开购物清单界面）外，其余新增的 {@code gui} 子命令均为
- * 占位符，仅提示功能尚未实现。</p>
+ * <p>TODO 除 {@code /qab list gui} 与 {@code /qab plan gui}（真实打开界面）外，其余新增的
+ * {@code gui} 子命令均为占位符，仅提示功能尚未实现。</p>
  *
  * 文件名参数统一用 {@code StringArgumentType.string()}，含会导致 string() 中断的字符（空格及
  * 命令语法保留字符）时，补全项会以双引号包裹，解析时由 {@link CommandPathHelper#resolveFile}
@@ -169,9 +170,14 @@ public class QabCommands {
                                     .suggests(COMPOUND_SUGGESTIONS)
                                     .executes(QabCommands::execCompoundOpen)));
 
-            // /qab plan gui|generate [name]|list|open <file> —— 购物计划
+            // /qab plan gui [file]|generate [name]|list|open <file> —— 购物计划
             var plan = literal("plan")
-                    .then(literal("gui").executes(QabCommands::execGuiPlaceholder))
+                    .then(literal("gui")
+                            .executes(QabCommands::execPlanGui)
+                            .then(argument("file", StringArgumentType.string())
+                                    .suggests(PLAN_SUGGESTIONS)
+                                    .executes(ctx -> execPlanGui(ctx,
+                                            StringArgumentType.getString(ctx, "file")))))
                     .then(literal("generate")
                             .executes(ctx -> execGeneratePlan(ctx, null))
                             .then(argument("name", StringArgumentType.string())
@@ -366,6 +372,71 @@ public class QabCommands {
         return 1;
     }
 
+    // ---- plan gui ----
+    /**
+     * 打开计划查看界面：无参数入口，委托 {@link #execPlanGui(CommandContext, String)} 并传 null，
+     * 此时使用 {@link #selectedPlan}（由 {@code /qab plan open} 选中），未选中时报错。
+     */
+    private static int execPlanGui(CommandContext<FabricClientCommandSource> ctx) {
+        return execPlanGui(ctx, null);
+    }
+
+    /**
+     * 打开计划查看界面（PlanScreen）。
+     *
+     * <p>无参数时使用 {@link #selectedPlan}（由 {@code /qab plan open} 选中），未选中报错；
+     * 带 file 时在 plan 目录解析并校验。打开后同时设为选中，便于紧接着执行 {@code /qab nav apply}。</p>
+     */
+    private static int execPlanGui(CommandContext<FabricClientCommandSource> ctx, String file) {
+        Path target;
+        if (file != null && !file.isBlank()) {
+            target = CommandPathHelper.resolveFile(QAB_PLAN_DIR, file, ".json");
+            if (target == null) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.plan_open_not_found",
+                        file, QAB_PLAN_DIR.toString()));
+                return 0;
+            }
+        } else {
+            target = selectedPlan;
+            if (target == null) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.no_plan_selected"));
+                return 0;
+            }
+        }
+        if (!Files.exists(target)) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.plan_open_not_found",
+                    target.getFileName().toString(), QAB_PLAN_DIR.toString()));
+            return 0;
+        }
+        // 打开时校验：JSON 必须可解析且含计划条目，校验通过才打开
+        ShoppingPlan plan = loadShoppingPlan(target);
+        if (plan == null) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.plan_open_failed",
+                    target.getFileName().toString(), "JSON parse or read error"));
+            return 0;
+        }
+        if (plan.getPlan() == null || plan.getPlan().isEmpty()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.plan_open_empty",
+                    target.getFileName().toString()));
+            return 0;
+        }
+        // 打开 GUI 的同时设为选中，便于后续 /qab nav apply 无参使用
+        selectedPlan = target;
+        String planName = stripExtension(target.getFileName().toString());
+        LOGGER.info("Opening plan GUI: {}", target);
+        try {
+            var client = ctx.getSource().getClient();
+            // 必须用 send（延迟到下一帧）而非同步 setScreen：命令运行于客户端主线程，
+            // 同步切屏后，聊天框关闭时的 setScreen(null) 会将其覆盖，导致「有日志但屏幕不出现」。
+            client.send(() -> client.setScreen(new PlanScreen(plan, planName, client.currentScreen)));
+        } catch (Throwable t) {
+            LOGGER.error("Failed to open plan GUI for {}", target, t);
+            ctx.getSource().sendError(Text.literal("Failed to open plan GUI: " + t));
+            return 0;
+        }
+        return 1;
+    }
+
     // ---- plan generator ----
     private static int execGeneratePlan(CommandContext<FabricClientCommandSource> ctx, String name) {
         if (selectedDb == null) {
@@ -377,68 +448,99 @@ public class QabCommands {
             return 0;
         }
 
-        String planName = (name == null || name.isBlank())
+        ShoppingList list = loadShoppingList(selectedList);
+        if (list == null) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.list_parse_failed",
+                    selectedList.getFileName().toString(), "JSON parse or read error"));
+            return 0;
+        }
+        if (list.getItems() == null || list.getItems().isEmpty()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.list_empty",
+                    selectedList.getFileName().toString()));
+            return 0;
+        }
+
+        // 命令层与 GUI「立即生成」共用同一生成核心，避免逻辑双写。
+        GenerateResult result = generateAndSavePlan(list, (name == null || name.isBlank())
                 ? "plan-" + LocalDateTime.now().format(PLAN_TIME)
-                : name;
-        if (!planName.endsWith(".json")) {
-            planName += ".json";
+                : name);
+        if (!result.ok()) {
+            ctx.getSource().sendError(Text.translatable(result.errorKey(), result.errorArgs()));
+            return 0;
+        }
+
+        ShoppingPlan plan = result.plan();
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.plan_generated",
+                result.path().getFileName().toString(),
+                plan.getPlan().size(),
+                plan.getTotalCost(),
+                plan.getFailed().size(),
+                plan.getWarn().size()));
+        LOGGER.info("Plan generated: {} ({} entries)", result.path(), plan.getPlan().size());
+        return 1;
+    }
+
+    /**
+     * 计划生成结果。成功时携带内存中的计划与落盘路径；失败时携带错误翻译键及参数。
+     */
+    public record GenerateResult(boolean ok, ShoppingPlan plan, Path path,
+                                 String errorKey, Object[] errorArgs) {
+    }
+
+    /**
+     * 生成并保存购物计划（命令层与 GUI「立即生成」按钮共用）。
+     *
+     * <p>依赖已选数据库 {@link #selectedDb} 与当前区域表
+     * ({@link RegionManager#getCurrentTable()})；不依赖已选清单文件，由调用方传入清单对象。</p>
+     *
+     * @param list 购物清单（必须非空）
+     * @param planName 计划名（不含或含 .json 均可，内部会补全与清洗）
+     * @return 生成结果；失败时 {@code errorKey} 为翻译键（如 qab.msg.no_db_selected）
+     */
+    public static GenerateResult generateAndSavePlan(ShoppingList list, String planName) {
+        if (selectedDb == null) {
+            return new GenerateResult(false, null, null, "qab.msg.no_db_selected", new Object[0]);
+        }
+        if (list == null || list.getItems() == null || list.getItems().isEmpty()) {
+            return new GenerateResult(false, null, null, "qab.msg.list_empty",
+                    new Object[]{"(empty)"});
+        }
+
+        String planFileName = sanitizeFileName(planName);
+        if (!planFileName.endsWith(".json")) {
+            planFileName += ".json";
         }
 
         try {
             Files.createDirectories(QAB_PLAN_DIR);
 
-            ShoppingList list = loadShoppingList(selectedList);
-            if (list == null) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.list_parse_failed",
-                        selectedList.getFileName().toString(), "JSON parse or read error"));
-                return 0;
-            }
-            if (list.getItems() == null || list.getItems().isEmpty()) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.list_empty",
-                        selectedList.getFileName().toString()));
-                return 0;
-            }
-
             ShopExportData export;
             try {
                 export = selectedDb.load();
             } catch (Exception e) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.db_load_failed",
-                        selectedDb.getPath().getFileName().toString(), e.getMessage()));
                 LOGGER.error("Failed to load chunkscanner DB: {}", selectedDb, e);
-                return 0;
+                return new GenerateResult(false, null, null, "qab.msg.db_load_failed",
+                        new Object[]{selectedDb.getPath().getFileName().toString(), String.valueOf(e.getMessage())});
             }
 
             // 按当前区域表做分组 + TSP 排序（未打开区域表时自动创建空表，等价于不做分组）
             ShoppingPlan plan = ShoppingPlanner.generatePlan(list, export, RegionManager.getCurrentTable());
 
-            Path outPath = QAB_PLAN_DIR.resolve(planName);
-            String json = new GsonBuilder().setPrettyPrinting().create().toJson(plan);
+            Path outPath = QAB_PLAN_DIR.resolve(planFileName);
             try {
-                Files.writeString(outPath, json, StandardCharsets.UTF_8);
+                Files.writeString(outPath, new GsonBuilder().setPrettyPrinting().create().toJson(plan),
+                        StandardCharsets.UTF_8);
             } catch (IOException e) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.plan_write_failed",
-                        outPath.getFileName().toString(), e.getMessage()));
                 LOGGER.error("Failed to write plan: {}", outPath, e);
-                return 0;
+                return new GenerateResult(false, null, null, "qab.msg.plan_write_failed",
+                        new Object[]{outPath.getFileName().toString(), String.valueOf(e.getMessage())});
             }
 
-            ctx.getSource().sendFeedback(Text.translatable("qab.msg.plan_generated",
-                    outPath.getFileName().toString(),
-                    plan.getPlan().size(),
-                    plan.getTotalCost(),
-                    plan.getFailed().size(),
-                    plan.getWarn().size()));
-            LOGGER.info("Plan generated: {} ({} entries)", outPath, plan.getPlan().size());
-            return 1;
+            return new GenerateResult(true, plan, outPath, null, null);
         } catch (Exception e) {
             LOGGER.error("Failed to generate plan", e);
-            if (e instanceof IOException) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.plan_io_error", e.getMessage()));
-            } else {
-                ctx.getSource().sendError(Text.translatable("qab.msg.plan_unexpected", e.getMessage()));
-            }
-            return 0;
+            return new GenerateResult(false, null, null, "qab.msg.plan_unexpected",
+                    new Object[]{String.valueOf(e.getMessage())});
         }
     }
 
@@ -660,8 +762,12 @@ public class QabCommands {
                 SCHEMATIC_EXTENSIONS.toArray(new String[0]));
     }
 
-    /** 去除文件名中的非法字符，避免写入失败或目录穿越。 */
-    private static String sanitizeFileName(String name) {
+    /**
+     * 清洗文件名：非法字符替换为下划线；空名、{@code "."} 或 {@code ".."} 回退为
+     * {@code "list-"} + 时间戳名。仅做清洗，不负责补 {@code .json} 扩展名
+     * （GUI 另存为 / 立即生成共用）。
+     */
+    public static String sanitizeFileName(String name) {
         String s = name == null ? "" : name.trim();
         s = s.replaceAll("[\\\\/:*?\"<>|]", "_");
         if (s.isBlank() || ".".equals(s) || "..".equals(s)) {
@@ -1137,6 +1243,7 @@ public class QabCommands {
         return 1;
     }
 
+    /** 读取购物清单 JSON；文件不存在或解析失败返回 null。 */
     public static ShoppingList loadShoppingList(Path path) {
         if (!Files.exists(path)) return null;
         try {
@@ -1159,6 +1266,54 @@ public class QabCommands {
             return true;
         } catch (Exception e) {
             LOGGER.error("Failed to save shopping list: {}", path, e);
+            return false;
+        }
+    }
+
+    /**
+     * 另存为：将清单以新名字写入正式 list 目录，并同步更新清单 name 字段。
+     *
+     * @param list 购物清单（内存态，调用方持有引用）
+     * @param name 新文件名（不含或含 .json 均可，内部清洗补全）
+     * @return 落盘后的完整路径；失败返回 null（详情见日志）
+     */
+    public static Path saveShoppingListAs(ShoppingList list, String name) {
+        String safeName = sanitizeFileName(name);
+        if (!safeName.endsWith(".json")) {
+            safeName += ".json";
+        }
+        Path target = QAB_LIST_DIR.resolve(safeName);
+        list.setName(name == null ? "" : name);
+        if (!saveShoppingList(target, list)) {
+            return null;
+        }
+        LOGGER.info("Shopping list saved as: {}", target);
+        return target;
+    }
+
+    /** 读取购物计划 JSON；文件不存在或解析失败返回 null（旧计划缺 name/desc 字段按 null 兼容）。 */
+    public static ShoppingPlan loadShoppingPlan(Path path) {
+        if (!Files.exists(path)) return null;
+        try {
+            String json = Files.readString(path, StandardCharsets.UTF_8);
+            return new Gson().fromJson(json, ShoppingPlan.class);
+        } catch (Exception e) {
+            LOGGER.error("Failed to load shopping plan: {}", path, e);
+            return null;
+        }
+    }
+
+    /** 将购物计划以 Gson pretty 格式写回 JSON（与命令层持久化约定一致）。 */
+    public static boolean saveShoppingPlan(Path path, ShoppingPlan plan) {
+        try {
+            if (path.getParent() != null) {
+                Files.createDirectories(path.getParent());
+            }
+            String json = new GsonBuilder().setPrettyPrinting().create().toJson(plan);
+            Files.writeString(path, json, StandardCharsets.UTF_8);
+            return true;
+        } catch (Exception e) {
+            LOGGER.error("Failed to save shopping plan: {}", path, e);
             return false;
         }
     }
