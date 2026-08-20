@@ -69,7 +69,7 @@ public class QabConfig implements ConfigData {
 
     /** 是否启用区域选择器（左/右键记录坐标，由命令 /qab region selector 切换）。 */
     private static final boolean DEFAULT_REGION_SELECTOR_MODE = false;
-    /** 是否渲染区域高亮边框（由命令 /qab region visible 切换）。 */
+    /** 是否渲染区域高亮边框（由命令 /qab region highlighter 切换）。 */
     private static final boolean DEFAULT_REGION_VISIBLE = true;
 
     /** 搬运间隔上限，避免用户填个巨大值让存货永远跑不完。 */
@@ -271,5 +271,16 @@ public class QabConfig implements ConfigData {
     public String removeStashPositionAt(int index) {
         if (index < 0 || index >= stashPositions.size()) return null;
         return stashPositions.remove(index);
+    }
+
+    /**
+     * 清空全部存货点。
+     *
+     * @return 被清空的存货点数量
+     */
+    public int clearStashPositions() {
+        int count = stashPositions.size();
+        stashPositions.clear();
+        return count;
     }
 }

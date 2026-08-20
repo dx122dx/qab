@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * 购物清单生成配置：由 {@code /qab generate list <file> [config...]} 的命令行
+ * 购物清单生成配置：由 {@code /qab list generate <file> [config...]} 的命令行
  * {@code key=value} 串解析而来，用于调整生成结果的属性。
  *
  * <p>所有字段为 {@code null} 表示使用生成器内建默认值。风格参考 Chunk Scanner

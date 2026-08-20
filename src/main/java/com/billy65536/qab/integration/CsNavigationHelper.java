@@ -161,7 +161,7 @@ public final class CsNavigationHelper {
      * 玩家当前所在维度 id，如 {@code minecraft:overworld}。
      *
      * <p>取 {@code world.getRegistryKey()}（世界 id）而非 {@code getDimensionKey()}（维度类型 id）：
-     * 前者才是 chunkscanner 数据库与 {@code /qab stash add} 写入位置字符串时用的那一个，
+     * 前者才是 chunkscanner 数据库与 {@code /qab nav stash add} 写入位置字符串时用的那一个，
      * 二者对自定义维度并不相等。</p>
      *
      * @return 维度 id；尚未进入世界时返回 null
@@ -201,7 +201,7 @@ public final class CsNavigationHelper {
     /**
      * 把维度与坐标格式化为位置字符串 {@code dimension(x,y,z)}。
      *
-     * <p>与 {@link #parsePosition(String)} 互逆，供 {@code /qab stash add} 记录当前位置。</p>
+     * <p>与 {@link #parsePosition(String)} 互逆，供 {@code /qab nav stash add} 记录当前位置。</p>
      */
     public static String formatPosition(String dimensionId, int x, int y, int z) {
         return dimensionId + "(" + x + "," + y + "," + z + ")";

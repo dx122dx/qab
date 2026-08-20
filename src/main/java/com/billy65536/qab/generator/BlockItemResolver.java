@@ -204,7 +204,7 @@ public final class BlockItemResolver {
      *
      * <p>解析优先级：不可获得集 → 不规则表 → 组合方块 → 后缀规则（potted/candle/wall）
      * → Minecraft 注册表兜底。前三张表来自 {@link BlockMappingConfig}（内置默认 + 配置文件合并），
-     * 可在不重启游戏的情况下经 {@code /qab generate list} 重新加载。
+     * 可在不重启游戏的情况下经 {@code /qab list generate} 重新加载。
      *
      * @param blockId 已规范化的方块 ID（含命名空间、无方块状态）
      * @return 解析结果，永不为 null

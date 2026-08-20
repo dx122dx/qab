@@ -24,10 +24,10 @@ public class QShopAutoBuyMod implements ClientModInitializer {
         // 注册 AutoConfig 两个配置段（qab:config / qab:schematic），必须在任何配置访问前调用
         ConfigLoader.register();
 
-        // 注册命令：/qab help、/qab select db|list、/qab plan、/qab nav apply|stop、
-        //          /qab stash add|list|remove、/qab generate list、/qab region ...
+        // 注册命令：/qab help、/qab gui、/qab db、/qab list、/qab compound、/qab plan、
+        //          /qab nav（含 nav stash）、/qab region ...
         QabCommands.register();
-        LOGGER.info("Commands registered. Use /qab select db/list, then /qab plan.");
+        LOGGER.info("Commands registered. Use /qab help for the command overview.");
 
         // 区域选择器与高亮渲染
         RegionSelector.register();

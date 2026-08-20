@@ -11,7 +11,7 @@ import java.util.Map;
 /**
  * 购物清单生成配置（AutoConfig 驱动，JSON：{gameDir}/config/qab_schematic.json）。
  *
- * <p>收纳所有与 {@code /qab generate list}（购物清单生成）相关的可配置项，
+ * <p>收纳所有与 {@code /qab list generate}（购物清单生成）相关的可配置项，
  * 经 infrastructure 的 {@code /inf config get|set|reset|gui qab:schematic/...} 读写：</p>
  * <ul>
  *   <li><b>方块映射三表</b>（{@code unobtainable}/{@code irregular}/{@code composite}）：
@@ -20,7 +20,7 @@ import java.util.Map;
  *   <li><b>生成默认参数</b>（{@code name}/{@code description}/{@code redundancy}/{@code outName}/
  *       {@code multiplier}/{@code minCount}/{@code threshold}/{@code includeBlockEntities}/
  *       {@code deductInventory}/{@code rawId}/{@code excludes}/{@code sort}）：
- *       {@code /qab generate list} 命令行未指定的键取这里的默认值，命令行仍可覆盖；</li>
+ *       {@code /qab list generate} 命令行未指定的键取这里的默认值，命令行仍可覆盖；</li>
  *   <li><b>含水水桶开关</b>（{@code waterloggedCountsAsBucket}）：默认 false 保持现状——
  *       含水方块（{@code WATERLOGGED=true}）不额外计水桶；开启后每个含水方块额外计 1 水桶。</li>
  * </ul>
@@ -30,7 +30,7 @@ import java.util.Map;
 @Config(name = "qab_schematic")
 public class SchematicConfig implements ConfigData {
 
-    /** 排序方式（与 {@code /qab generate list sort=...} 一致）。 */
+    /** 排序方式（与 {@code /qab list generate sort=...} 一致）。 */
     public enum SortMode {
         /** 按数量降序。 */
         COUNT,

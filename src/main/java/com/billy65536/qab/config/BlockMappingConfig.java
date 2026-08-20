@@ -26,7 +26,7 @@ import java.util.Set;
  * {@code unobtainable} 取内置与配置的<b>并集</b>。后缀规则与注册表兜底属于算法，
  * 仍保留在 {@link BlockItemResolver} 代码中。
  *
- * <p><b>物化时机</b>：每次 {@code /qab generate list} 执行时调用
+ * <p><b>物化时机</b>：每次 {@code /qab list generate} 执行时调用
  * {@link #reloadFrom(SchematicConfig)}，实时刷新合并结果，改配置无需重启游戏。
  */
 public final class BlockMappingConfig {

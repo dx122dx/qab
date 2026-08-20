@@ -59,16 +59,18 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.lit
  *
  * <pre>
  *   /qab help
- *   /qab select db &lt;file&gt;
- *   /qab select list &lt;file&gt;
- *   /qab plan [name]
- *   /qab nav apply [file]
- *   /qab nav stop
- *   /qab stash add|list|remove &lt;index&gt;
- *   /qab generate list &lt;file&gt; [config...]
- *   /qab region open|create|visible|save|selector|remove|list
- *   /qab compound save|open [name]
+ *   /qab gui
+ *   /qab db gui|open &lt;file&gt;|list
+ *   /qab list gui [file]|open &lt;file&gt;|list|generate &lt;file&gt; [config...]
+ *   /qab compound gui|save [name]|open &lt;name&gt;
+ *   /qab plan gui|generate [name]|list|open &lt;file&gt;
+ *   /qab region gui|open|create|save|selector|highlighter|remove|list
+ *   /qab nav apply [file]|pause|resume|stop
+ *   /qab nav stash gui|add|remove &lt;index&gt;|list|clear
  * </pre>
+ *
+ * <p>TODO 除 {@code /qab list gui}（真实打开购物清单界面）外，其余新增的 {@code gui} 子命令均为
+ * 占位符，仅提示功能尚未实现。</p>
  *
  * 文件名参数统一用 {@code StringArgumentType.string()}，含会导致 string() 中断的字符（空格及
  * 命令语法保留字符）时，补全项会以双引号包裹，解析时由 {@link CommandPathHelper#resolveFile}
@@ -94,6 +96,8 @@ public class QabCommands {
 
     static CsQShopDbLoader selectedDb = null;
     static Path selectedList = null;
+    /** 由 {@code /qab plan open} 选中，供 {@code /qab nav apply} 无参数时使用。 */
+    static Path selectedPlan = null;
 
     // ---- auto-complete: 委托 CommandPathHelper，含会导致 string() 中断的字符时自动加引号 ----
     private static final SuggestionProvider<FabricClientCommandSource> DB_SUGGESTIONS =
@@ -116,46 +120,33 @@ public class QabCommands {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
             var root = literal("qab");
 
-            var select = literal("select")
-                    .then(literal("db")
+            // /qab gui —— 总界面（占位符，尚未实现）
+            var gui = literal("gui").executes(QabCommands::execGuiPlaceholder);
+
+            // /qab db gui|open <file>|list —— QShop 数据库（zip）
+            var db = literal("db")
+                    .then(literal("gui").executes(QabCommands::execGuiPlaceholder))
+                    .then(literal("open")
                             .then(argument("file", StringArgumentType.string())
                                     .suggests(DB_SUGGESTIONS)
-                                    .executes(QabCommands::execSelectDb)))
-                    .then(literal("list")
+                                    .executes(QabCommands::execDbOpen)))
+                    .then(literal("list").executes(QabCommands::execDbList));
+
+            // /qab list gui [file]|open <file>|list|generate <file> [config...] —— 购物清单
+            // generate 的 config 格式: key=value [key=value ...]
+            var list = literal("list")
+                    .then(literal("gui")
+                            .executes(QabCommands::execListGui)
                             .then(argument("file", StringArgumentType.string())
                                     .suggests(LIST_SUGGESTIONS)
-                                    .executes(QabCommands::execSelectList)));
-
-            var plan = literal("plan")
-                    .executes(ctx -> execGeneratePlan(ctx, null))
-                    .then(argument("name", StringArgumentType.string())
-                            .executes(ctx -> execGeneratePlan(ctx,
-                                    StringArgumentType.getString(ctx, "name"))));
-
-            var nav = literal("nav")
-                    .then(literal("apply")
-                            .executes(ctx -> execNavApply(ctx, null))
-                            .then(argument("file", StringArgumentType.string())
-                                    .suggests(PLAN_SUGGESTIONS)
-                                    .executes(ctx -> execNavApply(ctx,
+                                    .executes(ctx -> execListGui(ctx,
                                             StringArgumentType.getString(ctx, "file")))))
-                    .then(literal("stop").executes(QabCommands::execNavStop))
-                    .then(literal("pause").executes(QabCommands::execNavPause))
-                    .then(literal("resume").executes(QabCommands::execNavResume));
-
-            // /qab stash add|remove|list —— 存货点管理（用当前站立坐标增删，免手写 JSON）
-            var stash = literal("stash")
-                    .then(literal("add").executes(QabCommands::execStashAdd))
-                    .then(literal("list").executes(QabCommands::execStashList))
-                    .then(literal("remove")
-                            .then(argument("index", IntegerArgumentType.integer(1))
-                                    .executes(ctx -> execStashRemove(ctx,
-                                            IntegerArgumentType.getInteger(ctx, "index")))));
-
-            // /qab generate list <file> [config...]
-            // config 格式: key=value [key=value ...]
-            var generate = literal("generate")
-                    .then(literal("list")
+                    .then(literal("open")
+                            .then(argument("file", StringArgumentType.string())
+                                    .suggests(LIST_SUGGESTIONS)
+                                    .executes(QabCommands::execListOpen)))
+                    .then(literal("list").executes(QabCommands::execListList))
+                    .then(literal("generate")
                             .then(argument("file", StringArgumentType.string())
                                     .suggests(SCHEMATIC_SUGGESTIONS)
                                     .executes(ctx -> execGenerateList(ctx,
@@ -165,8 +156,36 @@ public class QabCommands {
                                                     StringArgumentType.getString(ctx, "file"),
                                                     StringArgumentType.getString(ctx, "config"))))));
 
-            // /qab region open|create|visible|save|selector|remove|list —— 区域选择 + TSP 分组
+            // /qab compound gui|save [name]|open <name> —— 打包/解包 DB + 分区表
+            var compound = literal("compound")
+                    .then(literal("gui").executes(QabCommands::execGuiPlaceholder))
+                    .then(literal("save")
+                            .executes(ctx -> execCompoundSave(ctx, null))
+                            .then(argument("name", StringArgumentType.string())
+                                    .executes(ctx -> execCompoundSave(ctx,
+                                            StringArgumentType.getString(ctx, "name")))))
+                    .then(literal("open")
+                            .then(argument("name", StringArgumentType.string())
+                                    .suggests(COMPOUND_SUGGESTIONS)
+                                    .executes(QabCommands::execCompoundOpen)));
+
+            // /qab plan gui|generate [name]|list|open <file> —— 购物计划
+            var plan = literal("plan")
+                    .then(literal("gui").executes(QabCommands::execGuiPlaceholder))
+                    .then(literal("generate")
+                            .executes(ctx -> execGeneratePlan(ctx, null))
+                            .then(argument("name", StringArgumentType.string())
+                                    .executes(ctx -> execGeneratePlan(ctx,
+                                            StringArgumentType.getString(ctx, "name")))))
+                    .then(literal("list").executes(QabCommands::execPlanList))
+                    .then(literal("open")
+                            .then(argument("file", StringArgumentType.string())
+                                    .suggests(PLAN_SUGGESTIONS)
+                                    .executes(QabCommands::execPlanOpen)));
+
+            // /qab region gui|open|create|save|selector|highlighter|remove|list —— 区域选择 + TSP 分组
             var region = literal("region")
+                    .then(literal("gui").executes(QabCommands::execGuiPlaceholder))
                     .then(literal("open")
                             .then(argument("name", StringArgumentType.string())
                                     .executes(QabCommands::execRegionOpen)))
@@ -180,60 +199,60 @@ public class QabCommands {
                                                                     .then(argument("y2", IntegerArgumentType.integer())
                                                                             .then(argument("z2", IntegerArgumentType.integer())
                                                                                     .executes(QabCommands::execRegionCreateCoords)))))))))
-                    .then(literal("visible")
-                            .executes(ctx -> execRegionVisible(ctx, null))
-                            .then(literal("on").executes(ctx -> execRegionVisible(ctx, true)))
-                            .then(literal("off").executes(ctx -> execRegionVisible(ctx, false))))
                     .then(literal("save").executes(QabCommands::execRegionSave))
                     .then(literal("selector")
                             .executes(ctx -> execRegionSelector(ctx, null))
                             .then(literal("on").executes(ctx -> execRegionSelector(ctx, true)))
                             .then(literal("off").executes(ctx -> execRegionSelector(ctx, false))))
+                    .then(literal("highlighter")
+                            .executes(ctx -> execRegionHighlighter(ctx, null))
+                            .then(literal("on").executes(ctx -> execRegionHighlighter(ctx, true)))
+                            .then(literal("off").executes(ctx -> execRegionHighlighter(ctx, false))))
                     .then(literal("remove")
                             .then(argument("name", StringArgumentType.string())
                                     .executes(QabCommands::execRegionRemove)))
                     .then(literal("list").executes(QabCommands::execRegionList));
 
-            // /qab compound save|open [name] —— 利用基础设施归档工具打包/解包 DB + 分区表
-            var compound = literal("compound")
-                    .then(literal("save")
-                            .executes(ctx -> execCompoundSave(ctx, null))
-                            .then(argument("name", StringArgumentType.string())
-                                    .executes(ctx -> execCompoundSave(ctx,
-                                            StringArgumentType.getString(ctx, "name")))))
-                    .then(literal("open")
-                            .then(argument("name", StringArgumentType.string())
-                                    .suggests(COMPOUND_SUGGESTIONS)
-                                    .executes(QabCommands::execCompoundOpen)));
-
-            // /qab list gui [file] —— 购物清单查看/编辑 GUI（缺省回落当前选中清单）
-            var list = literal("list")
-                    .then(literal("gui")
-                            .executes(QabCommands::execListGui)
+            // /qab nav apply [file]|pause|resume|stop —— 自动寻路购买
+            var nav = literal("nav")
+                    .then(literal("apply")
+                            .executes(ctx -> execNavApply(ctx, null))
                             .then(argument("file", StringArgumentType.string())
-                                    .suggests(LIST_SUGGESTIONS)
-                                    .executes(ctx -> execListGui(ctx,
-                                            StringArgumentType.getString(ctx, "file")))));
+                                    .suggests(PLAN_SUGGESTIONS)
+                                    .executes(ctx -> execNavApply(ctx,
+                                            StringArgumentType.getString(ctx, "file")))))
+                    .then(literal("stop").executes(QabCommands::execNavStop))
+                    .then(literal("pause").executes(QabCommands::execNavPause))
+                    .then(literal("resume").executes(QabCommands::execNavResume))
+                    // /qab nav stash gui|add|remove <index>|list|clear —— 存货点管理
+                    .then(literal("stash")
+                            .then(literal("gui").executes(QabCommands::execGuiPlaceholder))
+                            .then(literal("add").executes(QabCommands::execStashAdd))
+                            .then(literal("list").executes(QabCommands::execStashList))
+                            .then(literal("remove")
+                                    .then(argument("index", IntegerArgumentType.integer(1))
+                                            .executes(ctx -> execStashRemove(ctx,
+                                                    IntegerArgumentType.getInteger(ctx, "index")))))
+                            .then(literal("clear").executes(QabCommands::execStashClear)));
 
             var help = literal("help").executes(QabCommands::execHelp);
 
-            root.then(list);
-            root.then(select);
-            root.then(plan);
-            root.then(nav);
-            root.then(stash);
-            root.then(generate);
-            root.then(region);
-            root.then(compound);
             root.then(help);
+            root.then(gui);
+            root.then(db);
+            root.then(list);
+            root.then(compound);
+            root.then(plan);
+            root.then(region);
+            root.then(nav);
 
             dispatcher.register(root);
             LOGGER.info("Registered /qab commands");
         });
     }
 
-    // ---- select db ----
-    private static int execSelectDb(CommandContext<FabricClientCommandSource> ctx) {
+    // ---- db open ----
+    private static int execDbOpen(CommandContext<FabricClientCommandSource> ctx) {
         String file = StringArgumentType.getString(ctx, "file");
         Path target = CommandPathHelper.resolveFile(CS_EXPORT_DIR, file, ".zip");
         if (target != null && Files.exists(target)) {
@@ -241,13 +260,13 @@ public class QabCommands {
                 selectedDb = new CsQShopDbLoader(target);
             } catch (Exception e) {
                 if (e instanceof IOException) {
-                    ctx.getSource().sendError(Text.translatable("db_select_io_error", e.getMessage()));
+                    ctx.getSource().sendError(Text.translatable("qab.msg.db_open_io_error", e.getMessage()));
                 } else if(e instanceof IllegalArgumentException) {
-                    ctx.getSource().sendError(Text.translatable("db_select_metadata_invalid", e.getMessage()));
+                    ctx.getSource().sendError(Text.translatable("qab.msg.db_open_metadata_invalid", e.getMessage()));
                 } else {
-                    ctx.getSource().sendError(Text.translatable("db_select_unexpected", e.getMessage()));
+                    ctx.getSource().sendError(Text.translatable("qab.msg.db_open_unexpected", e.getMessage()));
                 }
-                LOGGER.warn("Failed to select DB '{}': {}", target.toString(), e);
+                LOGGER.warn("Failed to open DB '{}': {}", target.toString(), e);
                 selectedDb = null;
                 return 0;
             }
@@ -255,8 +274,8 @@ public class QabCommands {
             ValidationResult result = selectedDb.validate();
             printValidationIssues(ctx, result);
             if(!result.valid()) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.db_select_failed", file, "Invalid database"));
-                LOGGER.warn("Failed to select DB '{}': Invalid database", target.toString());
+                ctx.getSource().sendError(Text.translatable("qab.msg.db_open_failed", file, "Invalid database"));
+                LOGGER.warn("Failed to open DB '{}': Invalid database", target.toString());
                 selectedDb = null;
                 return 0;
             }
@@ -270,19 +289,31 @@ public class QabCommands {
         return 0;
     }
 
-    // ---- select list ----
-    private static int execSelectList(CommandContext<FabricClientCommandSource> ctx) {
+    // ---- list open ----
+    private static int execListOpen(CommandContext<FabricClientCommandSource> ctx) {
         String file = StringArgumentType.getString(ctx, "file");
         Path target = CommandPathHelper.resolveFile(QAB_LIST_DIR, file, ".json");
-        if (target != null) {
-            selectedList = target;
-            ctx.getSource().sendFeedback(Text.translatable("qab.msg.list_selected",
-                    target.getFileName().toString(), target.toString()));
-            LOGGER.info("Selected list: {}", selectedList);
-            return 1;
+        if (target == null) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.list_not_found", file, QAB_LIST_DIR.toString()));
+            return 0;
         }
-        ctx.getSource().sendError(Text.translatable("qab.msg.list_not_found", file, QAB_LIST_DIR.toString()));
-        return 0;
+        // 打开时校验：JSON 必须可解析且非空，校验通过才选中
+        ShoppingList list = loadShoppingList(target);
+        if (list == null) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.list_open_failed",
+                    target.getFileName().toString(), "JSON parse or read error"));
+            return 0;
+        }
+        if (list.getItems() == null || list.getItems().isEmpty()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.list_empty",
+                    target.getFileName().toString()));
+            return 0;
+        }
+        selectedList = target;
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.list_selected",
+                target.getFileName().toString(), target.toString()));
+        LOGGER.info("Selected list: {}", selectedList);
+        return 1;
     }
 
     // ---- list gui ----
@@ -409,6 +440,89 @@ public class QabCommands {
             }
             return 0;
         }
+    }
+
+    // ---- plan open: 校验并选中购物计划（供 /qab nav apply 无参使用）----
+    private static int execPlanOpen(CommandContext<FabricClientCommandSource> ctx) {
+        String file = StringArgumentType.getString(ctx, "file");
+        Path target = CommandPathHelper.resolveFile(QAB_PLAN_DIR, file, ".json");
+        if (target == null) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.plan_open_not_found",
+                    file, QAB_PLAN_DIR.toString()));
+            return 0;
+        }
+        // 打开时校验：JSON 必须可解析且含计划条目，校验通过才选中
+        ShoppingPlan plan;
+        try {
+            String json = Files.readString(target, StandardCharsets.UTF_8);
+            plan = new Gson().fromJson(json, ShoppingPlan.class);
+        } catch (Exception e) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.plan_open_failed",
+                    target.getFileName().toString(), String.valueOf(e.getMessage())));
+            LOGGER.error("Failed to parse plan: {}", target, e);
+            return 0;
+        }
+        if (plan == null || plan.getPlan() == null || plan.getPlan().isEmpty()) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.plan_open_empty",
+                    target.getFileName().toString()));
+            return 0;
+        }
+        selectedPlan = target;
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.plan_opened",
+                target.getFileName().toString(), target.toString()));
+        LOGGER.info("Opened plan: {}", selectedPlan);
+        return 1;
+    }
+
+    // ---- plan list: 列出已生成的购物计划 ----
+    private static int execPlanList(CommandContext<FabricClientCommandSource> ctx) {
+        return execFileList(ctx, QAB_PLAN_DIR, ".json",
+                "qab.msg.plan_list_empty", "qab.msg.plan_list_header");
+    }
+
+    // ---- db list: 列出导出目录中的数据库 ----
+    private static int execDbList(CommandContext<FabricClientCommandSource> ctx) {
+        return execFileList(ctx, CS_EXPORT_DIR, ".zip",
+                "qab.msg.db_list_empty", "qab.msg.db_list_header");
+    }
+
+    // ---- list list: 列出已生成的购物清单 ----
+    private static int execListList(CommandContext<FabricClientCommandSource> ctx) {
+        return execFileList(ctx, QAB_LIST_DIR, ".json",
+                "qab.msg.list_list_empty", "qab.msg.list_list_header");
+    }
+
+    /** 列出目录内指定扩展名的文件（单层、按文件名排序），输出风格与 stash/region list 一致。 */
+    private static int execFileList(CommandContext<FabricClientCommandSource> ctx, Path dir,
+                                    String ext, String emptyKey, String headerKey) {
+        if (!Files.isDirectory(dir)) {
+            ctx.getSource().sendFeedback(Text.translatable(emptyKey).formatted(Formatting.GRAY));
+            return 1;
+        }
+        List<String> names;
+        try (var stream = Files.list(dir)) {
+            names = stream
+                    .filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().endsWith(ext))
+                    .map(p -> p.getFileName().toString())
+                    .sorted()
+                    .collect(Collectors.toList());
+        } catch (IOException e) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.dir_list_failed",
+                    dir.toString(), e.getMessage()));
+            LOGGER.error("Failed to list directory: {}", dir, e);
+            return 0;
+        }
+        if (names.isEmpty()) {
+            ctx.getSource().sendFeedback(Text.translatable(emptyKey).formatted(Formatting.GRAY));
+            return 1;
+        }
+        ctx.getSource().sendFeedback(Text.translatable(headerKey, names.size()).formatted(Formatting.AQUA));
+        for (int i = 0; i < names.size(); i++) {
+            ctx.getSource().sendFeedback(Text.literal("  " + (i + 1) + ". " + names.get(i))
+                    .formatted(Formatting.GRAY));
+        }
+        return 1;
     }
 
     // ---- generate list: 解析原理图生成购物清单 ----
@@ -558,16 +672,22 @@ public class QabCommands {
 
     // ---- nav apply: 按计划自动寻路 + 到达自动购买 ----
     private static int execNavApply(CommandContext<FabricClientCommandSource> ctx, String file) {
+        Path target;
         if (file == null || file.isBlank()) {
-            ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_no_file"));
-            return 0;
-        }
-
-        // file 逻辑与 select list 同：先找 qab/plan/<file>.json，否则当全局路径
-        Path target = CommandPathHelper.resolveFile(QAB_PLAN_DIR, file, ".json");
-        if (target == null) {
-            ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_not_found", file, QAB_PLAN_DIR.toString()));
-            return 0;
+            // 无参数时使用 /qab plan open 选中的计划，未选中则报错
+            if (selectedPlan == null) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_no_selected_plan"));
+                return 0;
+            }
+            target = selectedPlan;
+        } else {
+            // file 逻辑与 list open 同：先找 qab/plan/<file>.json，否则当全局路径
+            target = CommandPathHelper.resolveFile(QAB_PLAN_DIR, file, ".json");
+            if (target == null) {
+                ctx.getSource().sendError(Text.translatable("qab.msg.nav_apply_not_found",
+                        file, QAB_PLAN_DIR.toString()));
+                return 0;
+            }
         }
 
         ShoppingPlan plan;
@@ -765,31 +885,50 @@ public class QabCommands {
         return dot > 0 ? fileName.substring(0, dot) : fileName;
     }
 
+    // ---- gui 占位符：功能尚未实现，统一提示 ----
+    private static int execGuiPlaceholder(CommandContext<FabricClientCommandSource> ctx) {
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.gui_placeholder")
+                .formatted(Formatting.GRAY));
+        return 1;
+    }
+
     // ---- help: 列出全部子命令与一句话用途 ----
     private static int execHelp(CommandContext<FabricClientCommandSource> ctx) {
         ctx.getSource().sendFeedback(Text.translatable("qab.help.header").formatted(Formatting.AQUA));
         String[] keys = {
-                "qab.help.select_db",
-                "qab.help.select_list",
-                "qab.help.plan",
-                "qab.help.nav_apply",
-                "qab.help.nav_stop",
-                "qab.help.nav_pause",
-                "qab.help.nav_resume",
-                "qab.help.stash_add",
-                "qab.help.stash_list",
-                "qab.help.stash_remove",
-                "qab.help.generate_list",
+                "qab.help.gui",
+                "qab.help.db_open",
+                "qab.help.db_list",
+                "qab.help.db_gui",
+                "qab.help.list_open",
+                "qab.help.list_list",
+                "qab.help.list_generate",
+                "qab.help.list_gui",
+                "qab.help.compound_save",
+                "qab.help.compound_open",
+                "qab.help.compound_gui",
+                "qab.help.plan_generate",
+                "qab.help.plan_list",
+                "qab.help.plan_open",
+                "qab.help.plan_gui",
                 "qab.help.region_open",
                 "qab.help.region_create",
                 "qab.help.region_create_coords",
-                "qab.help.region_visible",
                 "qab.help.region_save",
                 "qab.help.region_selector",
+                "qab.help.region_highlighter",
                 "qab.help.region_remove",
                 "qab.help.region_list",
-                "qab.help.compound_save",
-                "qab.help.compound_open",
+                "qab.help.region_gui",
+                "qab.help.nav_apply",
+                "qab.help.nav_pause",
+                "qab.help.nav_resume",
+                "qab.help.nav_stop",
+                "qab.help.nav_stash_add",
+                "qab.help.nav_stash_list",
+                "qab.help.nav_stash_remove",
+                "qab.help.nav_stash_clear",
+                "qab.help.nav_stash_gui",
                 "qab.help.help",
         };
         for (String key : keys) {
@@ -856,7 +995,7 @@ public class QabCommands {
     // ---- stash remove: 按序号移除存货点 ----
     private static int execStashRemove(CommandContext<FabricClientCommandSource> ctx, int index) {
         QabConfig config = ConfigLoader.getConfig();
-        // 命令里的序号从 1 开始，与 /qab stash list 的显示一致
+        // 命令里的序号从 1 开始，与 /qab nav stash list 的显示一致
         String removed = config.removeStashPositionAt(index - 1);
         if (removed == null) {
             ctx.getSource().sendError(Text.translatable("qab.msg.stash_remove_bad_index",
@@ -866,6 +1005,21 @@ public class QabCommands {
         ConfigLoader.saveConfig();
         ctx.getSource().sendFeedback(Text.translatable("qab.msg.stash_remove_done",
                 removed, config.getStashPositions().size()).formatted(Formatting.YELLOW));
+        return 1;
+    }
+
+    // ---- stash clear: 清空全部存货点 ----
+    private static int execStashClear(CommandContext<FabricClientCommandSource> ctx) {
+        QabConfig config = ConfigLoader.getConfig();
+        int count = config.clearStashPositions();
+        if (count <= 0) {
+            ctx.getSource().sendFeedback(Text.translatable("qab.msg.stash_list_empty")
+                    .formatted(Formatting.GRAY));
+            return 1;
+        }
+        ConfigLoader.saveConfig();
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.stash_clear_done", count)
+                .formatted(Formatting.YELLOW));
         return 1;
     }
 
@@ -917,15 +1071,15 @@ public class QabCommands {
         return 1;
     }
 
-    // ---- region visible [on|off]: 切换区域高亮渲染 ----
-    private static int execRegionVisible(CommandContext<FabricClientCommandSource> ctx, Boolean on) {
+    // ---- region highlighter [on|off]: 切换区域高亮渲染 ----
+    private static int execRegionHighlighter(CommandContext<FabricClientCommandSource> ctx, Boolean on) {
         QabConfig config = ConfigLoader.getConfig();
         boolean next = (on == null) ? !config.isRegionVisible() : on;
         config.setRegionVisible(next);
         ConfigLoader.saveConfig();
         RegionHighlightRenderer.setVisible(next);
         ctx.getSource().sendFeedback(Text.translatable(
-                next ? "qab.msg.region_visible_on" : "qab.msg.region_visible_off")
+                next ? "qab.msg.region_highlighter_on" : "qab.msg.region_highlighter_off")
                 .formatted(next ? Formatting.GREEN : Formatting.YELLOW));
         return 1;
     }

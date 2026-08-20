@@ -15,7 +15,7 @@ import java.util.List;
  * </ul>
  *
  * <p>版本 1 的计划无法用于 {@code /qab nav apply}（缺 itemId 就无法判断背包能否装下，
- * QShop 会拒绝发货），必须用 {@code /qab plan} 重新生成。</p>
+ * QShop 会拒绝发货），必须用 {@code /qab plan generate} 重新生成。</p>
  */
 public class ShoppingPlan {
     /** 当前计划格式版本。自动购买要求计划版本 &gt;= 该值。 */

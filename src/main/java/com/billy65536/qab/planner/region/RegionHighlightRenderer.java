@@ -42,7 +42,7 @@ public final class RegionHighlightRenderer {
         LOGGER.info("Region highlight renderer initialized (visible={}).", visible);
     }
 
-    /** 由命令 /qab region visible 更新可见性缓存。 */
+    /** 由命令 /qab region highlighter 更新可见性缓存。 */
     public static void setVisible(boolean v) {
         visible = v;
     }
