@@ -106,6 +106,28 @@ tasks.withType(JavaCompile).configureEach {
     it.options.compilerArgs.addAll(['--release', '17'])
 }
 
+tasks.register('verifyNoLegacyToastApi') {
+    group = 'verification'
+    description = 'Fails build when removed infrastructure toast API imports are reintroduced.'
+    doLast {
+        def offenders = fileTree('src/main/java')
+                .matching { include '**/*.java' }
+                .findAll { file ->
+                    file.text.contains('com.billy65536.infrastructure.core.gui.toast')
+                }
+                .collect { it.path }
+        if (!offenders.isEmpty()) {
+            throw new GradleException(
+                    "Legacy toast API imports are not available anymore. Offending file(s): ${offenders.join(', ')}"
+            )
+        }
+    }
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('verifyNoLegacyToastApi')
+}
+
 java {
     withSourcesJar()
     withJavadocJar()
