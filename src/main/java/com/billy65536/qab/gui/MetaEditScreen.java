@@ -8,6 +8,9 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.Element;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import com.billy65536.infrastructure.core.gui.toast.Messenger;
+import com.billy65536.infrastructure.core.gui.toast.ToastType;
+
 import net.minecraft.text.Text;
 import org.jetbrains.annotations.Nullable;
 import org.lwjgl.glfw.GLFW;
@@ -75,9 +78,7 @@ public class MetaEditScreen extends ScreenContainer {
         String name = this.nameField == null ? "" : this.nameField.getText().trim();
         String desc = this.descField == null ? "" : this.descField.getText();
         this.source.updateMeta(name, desc);
-        if (this.client.player != null) {
-            this.client.player.sendMessage(Text.translatable(KEY_SAVED), false);
-        }
+        Messenger.notify(Text.translatable(KEY_SAVED), ToastType.SUCCESS);
         this.client.setScreen(this.parent);
     }
 

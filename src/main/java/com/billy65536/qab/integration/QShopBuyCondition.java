@@ -1,6 +1,7 @@
 package com.billy65536.qab.integration;
 
 import com.billy65536.chunkscanner.core.navigation.NavigationCondition;
+import com.billy65536.infrastructure.core.gui.toast.Messenger;
 import com.billy65536.qab.automatic.BlockAimHelper;
 import com.billy65536.qab.automatic.BuyTask;
 import com.billy65536.qab.automatic.InventoryCapacityCalculator;
@@ -234,11 +235,8 @@ public final class QShopBuyCondition implements NavigationCondition {
 
     /** 视线被挡时提示玩家，等待超时。 */
     private void notifySightBlocked(MinecraftClient client) {
-        if (client.player != null) {
-            client.player.sendMessage(
-                    Text.translatable("qab.msg.buy_sight_blocked", formatPos(signPos))
-                            .formatted(Formatting.YELLOW), false);
-        }
+        Messenger.warn(Text.translatable("qab.msg.buy_sight_blocked", formatPos(signPos))
+                .formatted(Formatting.YELLOW));
     }
 
     private static String formatPos(BlockPos pos) {

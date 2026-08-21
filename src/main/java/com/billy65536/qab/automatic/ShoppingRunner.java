@@ -2,6 +2,8 @@ package com.billy65536.qab.automatic;
 
 import com.billy65536.chunkscanner.core.navigation.ChunkScannerNavigation;
 import com.billy65536.chunkscanner.core.navigation.NavigationEntry;
+import com.billy65536.infrastructure.core.gui.toast.Messenger;
+import com.billy65536.infrastructure.core.gui.toast.ToastType;
 import com.billy65536.qab.config.QabConfig;
 import com.billy65536.qab.integration.CsNavigationHelper;
 import com.billy65536.qab.integration.QShopBuyCondition;
@@ -277,7 +279,7 @@ public final class ShoppingRunner {
             LOGGER.info("Entered dimension {}, resuming shopping.",
                     CsNavigationHelper.currentDimension(client));
             awaitingDimension = null;
-            notifyPlayer(client, Text.translatable("qab.msg.dim_resumed",
+            Messenger.info(Text.translatable("qab.msg.dim_resumed",
                     CsNavigationHelper.currentDimension(client)).formatted(Formatting.AQUA));
             dispatchNext(client);
             return;
@@ -327,7 +329,7 @@ public final class ShoppingRunner {
                 return;
             }
             LOGGER.warn("Navigation ended without reaching {}, skipping.", currentTask.getSignPos());
-            notifyPlayer(client, Text.translatable("qab.msg.stash_target_unreachable",
+            Messenger.warn(Text.translatable("qab.msg.stash_target_unreachable",
                     formatPos(currentTask.getSignPos())).formatted(Formatting.YELLOW));
             skippedTasks++;
             currentTask = null;
@@ -412,7 +414,7 @@ public final class ShoppingRunner {
         if (!java.util.Objects.equals(target, awaitingDimension)) {
             LOGGER.info("No target in current dimension {}; waiting for player to enter {} ({} pending).",
                     CsNavigationHelper.currentDimension(client), target, pending.size());
-            notifyPlayer(client, Text.translatable("qab.msg.dim_wait",
+            Messenger.warn(Text.translatable("qab.msg.dim_wait",
                     pending.size(), target, String.valueOf(CsNavigationHelper.currentDimension(client)))
                     .formatted(Formatting.YELLOW));
         }
@@ -466,7 +468,7 @@ public final class ShoppingRunner {
 
         if (cond.isAimFailed()) {
             // 到店了却始终点不到牌子（被遮挡 / 牌子已不存在），给玩家一条明确提示
-            notifyPlayer(client, Text.translatable("qab.msg.buy_aim_failed",
+            Messenger.warn(Text.translatable("qab.msg.buy_aim_failed",
                     formatPos(task.getSignPos())).formatted(Formatting.YELLOW));
             skippedTasks++;
             dispatchNext(client);
@@ -488,7 +490,7 @@ public final class ShoppingRunner {
         if (task.getRetryCount() >= MAX_RETRY_PER_TASK) {
             LOGGER.warn("Task {} exceeded retry limit, skipping {} remaining item(s).",
                     task, remaining);
-            notifyPlayer(client, Text.translatable("qab.msg.stash_retry_exhausted",
+            Messenger.warn(Text.translatable("qab.msg.stash_retry_exhausted",
                     task.getItemId(), remaining).formatted(Formatting.YELLOW));
             skippedTasks++;
             dispatchNext(client);
@@ -501,7 +503,7 @@ public final class ShoppingRunner {
             if (!config.isStashEnabled()) {
                 LOGGER.warn("Inventory full and stash disabled; skipping remaining {} item(s).",
                         remaining);
-                notifyPlayer(client, Text.translatable("qab.msg.stash_disabled_full")
+                Messenger.error(Text.translatable("qab.msg.stash_disabled_full")
                         .formatted(Formatting.RED));
                 pending.pollFirst(); // 丢弃刚回插的任务
                 skippedTasks++;
@@ -517,7 +519,7 @@ public final class ShoppingRunner {
 
     /** 启动存货子流程。 */
     private void beginStash(MinecraftClient client) {
-        notifyPlayer(client, Text.translatable("qab.msg.stash_started")
+        Messenger.info(Text.translatable("qab.msg.stash_started")
                 .formatted(Formatting.AQUA));
 
         stash = new StashRoutine(config);
@@ -535,34 +537,34 @@ public final class ShoppingRunner {
 
         switch (r) {
             case SUCCESS -> {
-                notifyPlayer(client, Text.translatable("qab.msg.stash_done", moved)
-                        .formatted(Formatting.GREEN));
+                Messenger.notify(Text.translatable("qab.msg.stash_done", moved)
+                        .formatted(Formatting.GREEN), ToastType.SUCCESS);
                 dispatchNext(client);
             }
             case NOTHING_TO_STASH -> {
                 // 背包里全是保留物品却仍然装不下，继续买也没意义
-                notifyPlayer(client, Text.translatable("qab.msg.stash_nothing")
+                Messenger.error(Text.translatable("qab.msg.stash_nothing")
                         .formatted(Formatting.RED));
                 abortWithReason(client);
             }
             case NO_STASH_CONFIGURED -> {
-                notifyPlayer(client, Text.translatable("qab.msg.stash_not_configured")
+                Messenger.error(Text.translatable("qab.msg.stash_not_configured")
                         .formatted(Formatting.RED));
                 abortWithReason(client);
             }
             case ALL_FULL -> {
-                notifyPlayer(client, Text.translatable("qab.msg.stash_all_full", moved)
+                Messenger.error(Text.translatable("qab.msg.stash_all_full", moved)
                         .formatted(Formatting.RED));
                 abortWithReason(client);
             }
             case WRONG_DIMENSION -> {
-                notifyPlayer(client, Text.translatable("qab.msg.stash_wrong_dimension",
+                Messenger.error(Text.translatable("qab.msg.stash_wrong_dimension",
                         String.valueOf(CsNavigationHelper.currentDimension(client)))
                         .formatted(Formatting.RED));
                 abortWithReason(client);
             }
             default -> {
-                notifyPlayer(client, Text.translatable("qab.msg.stash_unreachable")
+                Messenger.error(Text.translatable("qab.msg.stash_unreachable")
                         .formatted(Formatting.RED));
                 abortWithReason(client);
             }
@@ -573,7 +575,7 @@ public final class ShoppingRunner {
     private void abortWithReason(MinecraftClient client) {
         int left = remaining();
         stop();
-        notifyPlayer(client, Text.translatable("qab.msg.buy_aborted", left, boughtItems)
+        Messenger.error(Text.translatable("qab.msg.buy_aborted", left, boughtItems)
                 .formatted(Formatting.RED));
     }
 
@@ -585,15 +587,9 @@ public final class ShoppingRunner {
         awaitingDimension = null;
         LOGGER.info("Shopping complete: {}/{} task(s), {} item(s) bought, {} skipped.",
                 completedTasks, totalTasks, boughtItems, skippedTasks);
-        notifyPlayer(client, Text.translatable("qab.msg.buy_complete",
+        Messenger.notify(Text.translatable("qab.msg.buy_complete",
                 completedTasks, totalTasks, boughtItems, skippedTasks)
-                .formatted(Formatting.GREEN));
-    }
-
-    private static void notifyPlayer(MinecraftClient client, Text text) {
-        if (client.player != null) {
-            client.player.sendMessage(text, false);
-        }
+                .formatted(Formatting.GREEN), ToastType.SUCCESS);
     }
 
     private static String formatPos(BlockPos pos) {

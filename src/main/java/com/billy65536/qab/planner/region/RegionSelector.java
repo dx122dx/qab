@@ -1,5 +1,7 @@
 package com.billy65536.qab.planner.region;
 
+import com.billy65536.infrastructure.core.gui.toast.Messenger;
+import com.billy65536.infrastructure.core.gui.toast.ToastType;
 import com.billy65536.qab.config.ConfigLoader;
 import com.billy65536.qab.config.QabConfig;
 import com.billy65536.qab.integration.CsNavigationHelper;
@@ -108,7 +110,7 @@ public final class RegionSelector {
     private static void onLeftClick(MinecraftClient client) {
         BlockPos pos = pointedBlock(client);
         if (pos == null) {
-            client.player.sendMessage(Text.translatable("qab.msg.region_no_target").formatted(Formatting.RED), false);
+            Messenger.error(Text.translatable("qab.msg.region_no_target").formatted(Formatting.RED));
             return;
         }
         String dim = CsNavigationHelper.currentDimension(client);
@@ -117,19 +119,19 @@ public final class RegionSelector {
         if (pendingName == null) {
             pendingName = "region-" + (++autoCounter);
         }
-        client.player.sendMessage(Text.translatable("qab.msg.region_corner_set",
+        Messenger.notify(Text.translatable("qab.msg.region_corner_set",
                         pendingName, dim, pos.getX(), pos.getY(), pos.getZ()).formatted(Formatting.GREEN),
-                false);
+                ToastType.SUCCESS);
     }
 
     private static void onRightClick(MinecraftClient client) {
         if (corner1 == null) {
-            client.player.sendMessage(Text.translatable("qab.msg.region_no_corner").formatted(Formatting.RED), false);
+            Messenger.error(Text.translatable("qab.msg.region_no_corner").formatted(Formatting.RED));
             return;
         }
         BlockPos pos = pointedBlock(client);
         if (pos == null) {
-            client.player.sendMessage(Text.translatable("qab.msg.region_no_target").formatted(Formatting.RED), false);
+            Messenger.error(Text.translatable("qab.msg.region_no_target").formatted(Formatting.RED));
             return;
         }
         // 以第一角所在维度为准
@@ -137,10 +139,10 @@ public final class RegionSelector {
                 pos.getX(), pos.getY(), pos.getZ(), corner1Dim);
         String name = pendingName;
         RegionManager.addRegion(name, region);
-        client.player.sendMessage(Text.translatable("qab.msg.region_created",
+        Messenger.notify(Text.translatable("qab.msg.region_created",
                         name, corner1[0], corner1[1], corner1[2],
                         pos.getX(), pos.getY(), pos.getZ(), corner1Dim).formatted(Formatting.GREEN),
-                false);
+                ToastType.SUCCESS);
 
         // 一次 create 只产出一个区域；清空临时状态准备下一轮
         corner1 = null;

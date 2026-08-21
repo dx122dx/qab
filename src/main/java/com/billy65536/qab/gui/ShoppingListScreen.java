@@ -2,6 +2,8 @@ package com.billy65536.qab.gui;
 
 import com.billy65536.infrastructure.core.gui.ScreenContainer;
 import com.billy65536.infrastructure.core.gui.layout.DynamicTextCell;
+import com.billy65536.infrastructure.core.gui.toast.Messenger;
+import com.billy65536.infrastructure.core.gui.toast.ToastType;
 import com.billy65536.infrastructure.core.gui.layout.MultiLineTextCell;
 import com.billy65536.infrastructure.core.gui.layout.TableLayout;
 import com.billy65536.infrastructure.core.gui.layout.TableLayoutBuilder;
@@ -637,9 +639,10 @@ public class ShoppingListScreen extends ScreenContainer {
         String name = this.saveAsEditor.getText().trim();
         this.removeSaveAsEditor();
         boolean ok = this.source.saveAs(name);
-        if (this.client.player != null) {
-            this.client.player.sendMessage(Text.translatable(ok
-                    ? "qab.msg.list_gui.save_success" : "qab.msg.list_gui.save_failed"), false);
+        if (ok) {
+            Messenger.notify(Text.translatable("qab.msg.list_gui.save_success"), ToastType.SUCCESS);
+        } else {
+            Messenger.error(Text.translatable("qab.msg.list_gui.save_failed"));
         }
         if (ok) {
             // 另存成功后源已指向正式文件，保存按钮恢复可用
@@ -676,15 +679,13 @@ public class ShoppingListScreen extends ScreenContainer {
         }
         final String finalName = planName;
         QabCommands.GenerateResult result = QabCommands.generateAndSavePlan(list, finalName);
-        if (this.client.player != null) {
-            if (result.ok()) {
-                this.client.player.sendMessage(Text.translatable(
-                        "qab.msg.list_gui.generate_success", result.path().getFileName().toString()), false);
-            } else {
-                this.client.player.sendMessage(Text.translatable(
-                        result.errorKey() == null ? "qab.msg.list_gui.generate_failed" : result.errorKey(),
-                        result.errorArgs()), false);
-            }
+        if (result.ok()) {
+            Messenger.notify(Text.translatable(
+                    "qab.msg.list_gui.generate_success", result.path().getFileName().toString()), ToastType.SUCCESS);
+        } else {
+            Messenger.error(Text.translatable(
+                    result.errorKey() == null ? "qab.msg.list_gui.generate_failed" : result.errorKey(),
+                    result.errorArgs()));
         }
         if (result.ok() && result.plan() != null) {
             // 成功后关闭当前 GUI，打开 PlanScreen 展示新计划（父屏幕为当前清单的返回目标）
@@ -696,9 +697,10 @@ public class ShoppingListScreen extends ScreenContainer {
 
     private void save() {
         boolean ok = this.source.save();
-        if (this.client.player != null) {
-            this.client.player.sendMessage(
-                    Text.translatable(ok ? "qab.msg.list_gui.save_success" : "qab.msg.list_gui.save_failed"), false);
+        if (ok) {
+            Messenger.notify(Text.translatable("qab.msg.list_gui.save_success"), ToastType.SUCCESS);
+        } else {
+            Messenger.error(Text.translatable("qab.msg.list_gui.save_failed"));
         }
         if (ok) {
             this.closeScreen();

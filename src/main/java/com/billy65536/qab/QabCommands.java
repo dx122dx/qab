@@ -1,6 +1,8 @@
 package com.billy65536.qab;
 
 import com.billy65536.chunkscanner.api.DatabaseApi;
+import com.billy65536.infrastructure.core.gui.toast.Messenger;
+import com.billy65536.infrastructure.core.gui.toast.ToastType;
 import com.billy65536.infrastructure.util.archive.ArchiveWriter;
 import com.billy65536.infrastructure.util.archive.ValidationResult;
 import com.billy65536.qab.compound.CompoundImage;
@@ -377,7 +379,7 @@ public class QabCommands {
                     @Override
                     public void onSelect(FileEntry entry) {
                         selectedList = entry.path();
-                        notifyPlayer(Text.translatable("qab.msg.file_gui.selected", entry.displayName()));
+                        Messenger.notify(Text.translatable("qab.msg.file_gui.selected", entry.displayName()), ToastType.SUCCESS);
                     }
 
                     @Override
@@ -420,7 +422,7 @@ public class QabCommands {
             client.send(() -> client.setScreen(new ShoppingListScreen(source, client.currentScreen,
                     () -> {
                         selectedList = target;
-                        notifyPlayer(Text.translatable("qab.msg.file_gui.selected", target.getFileName().toString()));
+                        Messenger.notify(Text.translatable("qab.msg.file_gui.selected", target.getFileName().toString()), ToastType.SUCCESS);
                     })));
         } catch (Throwable t) {
             LOGGER.error("Failed to open shopping list GUI for {}", target, t);
@@ -434,7 +436,7 @@ public class QabCommands {
     private static void openListInner(CommandContext<FabricClientCommandSource> ctx, Path target) {
         ShoppingListSource source = ShoppingListSource.load(target);
         if (source == null || source.size() == 0) {
-            notifyPlayer(Text.translatable("qab.msg.list_parse_failed",
+            Messenger.error(Text.translatable("qab.msg.list_parse_failed",
                     target.getFileName().toString(), "JSON parse or read error"));
             return;
         }
@@ -443,7 +445,7 @@ public class QabCommands {
             client.send(() -> client.setScreen(new ShoppingListScreen(source, client.currentScreen)));
         } catch (Throwable t) {
             LOGGER.error("Failed to open shopping list GUI for {}", target, t);
-            notifyPlayer(Text.literal("Failed to open list GUI: " + t));
+            Messenger.error(Text.literal("Failed to open list GUI: " + t));
         }
     }
 
@@ -464,7 +466,7 @@ public class QabCommands {
                     @Override
                     public void onSelect(FileEntry entry) {
                         selectedPlan = entry.path();
-                        notifyPlayer(Text.translatable("qab.msg.file_gui.selected", entry.displayName()));
+                        Messenger.notify(Text.translatable("qab.msg.file_gui.selected", entry.displayName()), ToastType.SUCCESS);
                     }
 
                     @Override
@@ -512,7 +514,7 @@ public class QabCommands {
             client.send(() -> client.setScreen(new PlanScreen(plan, planName, client.currentScreen,
                     () -> {
                         selectedPlan = target;
-                        notifyPlayer(Text.translatable("qab.msg.file_gui.selected", target.getFileName().toString()));
+                        Messenger.notify(Text.translatable("qab.msg.file_gui.selected", target.getFileName().toString()), ToastType.SUCCESS);
                     })));
         } catch (Throwable t) {
             LOGGER.error("Failed to open plan GUI for {}", target, t);
@@ -526,7 +528,7 @@ public class QabCommands {
     private static void openPlanInner(CommandContext<FabricClientCommandSource> ctx, Path target) {
         ShoppingPlan plan = loadShoppingPlan(target);
         if (plan == null || plan.getPlan() == null || plan.getPlan().isEmpty()) {
-            notifyPlayer(Text.translatable("qab.msg.plan_open_failed",
+            Messenger.error(Text.translatable("qab.msg.plan_open_failed",
                     target.getFileName().toString(), "JSON parse or read error"));
             return;
         }
@@ -536,7 +538,7 @@ public class QabCommands {
                     stripExtension(target.getFileName().toString()), client.currentScreen)));
         } catch (Throwable t) {
             LOGGER.error("Failed to open plan GUI for {}", target, t);
-            notifyPlayer(Text.literal("Failed to open plan GUI: " + t));
+            Messenger.error(Text.literal("Failed to open plan GUI: " + t));
         }
     }
 
@@ -1159,14 +1161,6 @@ public class QabCommands {
         return valid;
     }
 
-    /** 向玩家发一条聊天消息（命令层与 GUI 回调共用，不依赖命令上下文）。 */
-    private static void notifyPlayer(Text message) {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.player != null) {
-            client.player.sendMessage(message, false);
-        }
-    }
-
     /**
      * 扫描目录内指定扩展名的文件；若 {@code extraGlobal} 不在目录内（全局路径文件），
      * 追加为一行（globalPath=true，列表以下划线渲染 + tooltip 完整路径）。
@@ -1256,9 +1250,13 @@ public class QabCommands {
     private static void selectDbFile(Path target) {
         DbSelectResult r = selectDb(target);
         for (Text issue : r.issues()) {
-            notifyPlayer(issue);
+            Messenger.warn(issue);
         }
-        notifyPlayer(r.feedback());
+        if (r.ok()) {
+            Messenger.notify(r.feedback(), ToastType.SUCCESS);
+        } else {
+            Messenger.error(r.feedback());
+        }
     }
 
     /** region 文件列表（行【打开】+【选择】，点击行 = 占位内页；选择 = 打开该表）。 */
@@ -1269,7 +1267,7 @@ public class QabCommands {
                     @Override
                     public void onOpen(FileEntry entry) {
                         // region 内页 GUI 暂未实现，统一占位提示
-                        notifyPlayer(Text.translatable("qab.msg.gui_placeholder").formatted(Formatting.GRAY));
+                        Messenger.info(Text.translatable("qab.msg.gui_placeholder").formatted(Formatting.GRAY));
                     }
 
                     @Override
@@ -1277,8 +1275,8 @@ public class QabCommands {
                         // region 无独立选中状态，RegionManager 即当前表；选择 = 打开该表
                         String name = stripExtension(entry.path().getFileName().toString());
                         RegionManager.open(name);
-                        notifyPlayer(Text.translatable("qab.msg.region_opened",
-                                name, RegionManager.getCurrentTable().size()));
+                        Messenger.notify(Text.translatable("qab.msg.region_opened",
+                                name, RegionManager.getCurrentTable().size()), ToastType.SUCCESS);
                     }
 
                     @Override
@@ -1316,14 +1314,14 @@ public class QabCommands {
                     public void onSave(String name, Consumer<Boolean> done) {
                         CompoundSaveResult r = saveCompound(name);
                         if (r.ok()) {
-                            notifyPlayer(r.feedback());
+                            Messenger.notify(r.feedback(), ToastType.SUCCESS);
                             done.accept(true);
                             // 保存成功后刷新列表（保持滚动与高亮）
                             if (ctx.getSource().getClient().currentScreen instanceof FileListScreen fls) {
                                 fls.refresh(scanDir(QAB_COMPOUND_DIR, ".qcmp", null));
                             }
                         } else {
-                            notifyPlayer(r.feedback());
+                            Messenger.error(r.feedback());
                             done.accept(false);
                         }
                     }
@@ -1344,7 +1342,7 @@ public class QabCommands {
         selectedCompound = entry.path();
         selectedCompoundDbPath = selectedDb != null ? selectedDb.getPath() : null;
         selectedCompoundRegion = RegionManager.snapshot();
-        notifyPlayer(Text.translatable("qab.msg.file_gui.selected", entry.displayName()));
+        Messenger.notify(Text.translatable("qab.msg.file_gui.selected", entry.displayName()), ToastType.SUCCESS);
     }
 
     /** 选择 compound 后即时刷新已打开列表的高亮行（列表屏幕仍打开时）。 */
