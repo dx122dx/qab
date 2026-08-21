@@ -89,7 +89,9 @@ public class SaveBarLayout extends AbstractLayout {
     }
 
     private int[] fieldRect() {
-        int x = (this.width - FIELD_W) / 2 - 26;
+        // 展开态组合（文本框 + √ + ×）右边缘与收起态保存按钮右边缘重合（width - 20），
+        // 即输入框出现在保存按钮原位置，而非居中：FIELD_W + 6 + 20 + 4 + 20 = 250
+        int x = this.width - 20 - 6 - 20 - 4 - 20 - FIELD_W;
         int y = (this.height - BTN_H) / 2;
         return new int[]{x, y, FIELD_W, BTN_H};
     }

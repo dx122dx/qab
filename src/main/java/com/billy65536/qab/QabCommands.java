@@ -388,7 +388,7 @@ public class QabCommands {
                     public String defaultSaveName() {
                         return null;
                     }
-                }, -1);
+                }, selectedList);
     }
 
     /**
@@ -475,7 +475,7 @@ public class QabCommands {
                     public String defaultSaveName() {
                         return null;
                     }
-                }, -1);
+                }, selectedPlan);
     }
 
     /**
@@ -1198,17 +1198,32 @@ public class QabCommands {
     /**
      * 打开通用文件列表最小 Screen（无标题组件 + 标题行壳）。
      *
-     * @param highlightedRow 需要高亮的行索引（-1 无），compound 列表传选中行
+     * @param highlightPath 需要高亮的文件路径（null 无）；与 compound 一致，在扫描结果中按路径匹配行
      */
     private static int openFileListScreen(CommandContext<FabricClientCommandSource> ctx, Path dir, String ext,
                                           Path extraGlobal, ListActions actions,
-                                          FileListView.Callbacks callbacks, int highlightedRow) {
+                                          FileListView.Callbacks callbacks, Path highlightPath) {
         List<FileEntry> entries = scanDir(dir, ext, extraGlobal);
+        int highlightedRow = findHighlightedRow(entries, highlightPath);
         var client = ctx.getSource().getClient();
         // 必须用 send（延迟到下一帧）切屏，防止聊天框关闭覆盖
         client.send(() -> client.setScreen(new FileListScreen(
                 Text.translatable("qab.msg.file_gui.title"), actions, entries, callbacks, highlightedRow)));
         return 1;
+    }
+
+    /** 在扫描结果中按归一化绝对路径查找高亮行（未命中返回 -1）。 */
+    private static int findHighlightedRow(List<FileEntry> entries, Path path) {
+        if (path == null) {
+            return -1;
+        }
+        Path norm = path.toAbsolutePath().normalize();
+        for (int i = 0; i < entries.size(); i++) {
+            if (entries.get(i).path().toAbsolutePath().normalize().equals(norm)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /** db 文件列表（行仅【选择】，点击行 = 选择）。 */
@@ -1234,7 +1249,7 @@ public class QabCommands {
                     public String defaultSaveName() {
                         return null;
                     }
-                }, -1);
+                }, selectedDb != null ? selectedDb.getPath() : null);
     }
 
     /** 选择 DB（文件列表【选择】/点击行）：加载 + 校验，反馈结果。 */
@@ -1274,24 +1289,14 @@ public class QabCommands {
                     public String defaultSaveName() {
                         return null;
                     }
-                }, -1);
+                }, RegionManager.regionDir().resolve(
+                        RegionManager.sanitizeName(RegionManager.getCurrentTableName()) + ".json"));
     }
 
     /** compound 文件列表（行仅【选择】+ 保存组件，高亮选中的 qcmp；点击行 = 选择）。 */
     private static int execCompoundGui(CommandContext<FabricClientCommandSource> ctx) {
         // region/db 变更则取消 compound 选择（高亮失效）
         isCompoundSelectionValid();
-        List<FileEntry> entries = scanDir(QAB_COMPOUND_DIR, ".qcmp", null);
-        int hl = -1;
-        if (selectedCompound != null) {
-            Path norm = selectedCompound.toAbsolutePath().normalize();
-            for (int i = 0; i < entries.size(); i++) {
-                if (entries.get(i).path().toAbsolutePath().normalize().equals(norm)) {
-                    hl = i;
-                    break;
-                }
-            }
-        }
         return openFileListScreen(ctx, QAB_COMPOUND_DIR, ".qcmp", null,
                 new ListActions(false, true, true),
                 new FileListView.Callbacks() {
@@ -1331,7 +1336,7 @@ public class QabCommands {
                         String fn = selectedDb.getPath().getFileName().toString();
                         return fn.endsWith(".zip") ? fn.substring(0, fn.length() - 4) : fn;
                     }
-                }, hl);
+                }, selectedCompound);
     }
 
     /** 选择 qcmp 文件为 compound 高亮目标，并同步记录 db/region 快照（供有效性比较）。 */
