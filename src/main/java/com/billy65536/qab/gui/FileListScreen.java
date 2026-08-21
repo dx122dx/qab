@@ -4,6 +4,7 @@ import com.billy65536.infrastructure.core.gui.ScreenContainer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
 
+import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -47,6 +48,13 @@ public class FileListScreen extends ScreenContainer {
     public void refresh(List<FileEntry> entries) {
         if (this.view != null) {
             this.view.setEntries(entries);
+        }
+    }
+
+    /** 按路径即时刷新选中行高亮（compound 选择后调用），并滚动到可见区。 */
+    public void highlight(Path path) {
+        if (this.view != null) {
+            this.view.setHighlightedRowByPath(path);
         }
     }
 

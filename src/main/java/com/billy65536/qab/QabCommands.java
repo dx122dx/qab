@@ -1286,7 +1286,7 @@ public class QabCommands {
         if (selectedCompound != null) {
             Path norm = selectedCompound.toAbsolutePath().normalize();
             for (int i = 0; i < entries.size(); i++) {
-                if (entries.get(i).path().equals(norm)) {
+                if (entries.get(i).path().toAbsolutePath().normalize().equals(norm)) {
                     hl = i;
                     break;
                 }
@@ -1298,11 +1298,13 @@ public class QabCommands {
                     @Override
                     public void onOpen(FileEntry entry) {
                         selectCompoundFile(entry);
+                        refreshCompoundHighlight(entry);
                     }
 
                     @Override
                     public void onSelect(FileEntry entry) {
                         selectCompoundFile(entry);
+                        refreshCompoundHighlight(entry);
                     }
 
                     @Override
@@ -1338,6 +1340,16 @@ public class QabCommands {
         selectedCompoundDbPath = selectedDb != null ? selectedDb.getPath() : null;
         selectedCompoundRegion = RegionManager.snapshot();
         notifyPlayer(Text.translatable("qab.msg.file_gui.selected", entry.displayName()));
+    }
+
+    /** 选择 compound 后即时刷新已打开列表的高亮行（列表屏幕仍打开时）。 */
+    private static void refreshCompoundHighlight(FileEntry entry) {
+        if (entry == null) {
+            return;
+        }
+        if (MinecraftClient.getInstance().currentScreen instanceof FileListScreen fls) {
+            fls.highlight(entry.path());
+        }
     }
 
     // ---- gui 占位符：功能尚未实现，统一提示 ----

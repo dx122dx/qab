@@ -12,6 +12,7 @@ import net.minecraft.util.Formatting;
 
 import org.jetbrains.annotations.Nullable;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -84,6 +85,24 @@ public class FileListView extends AbstractLayout {
         this.highlightedRow = row;
         if (this.table != null) {
             this.table.setHighlightedRow(row);
+        }
+    }
+
+    /** 按文件路径设置高亮行（两侧归一化比较；未命中清除；命中时滚动到可见区）。 */
+    public void setHighlightedRowByPath(Path path) {
+        int idx = -1;
+        if (path != null) {
+            Path norm = path.toAbsolutePath().normalize();
+            for (int i = 0; i < this.entries.size(); i++) {
+                if (this.entries.get(i).path().toAbsolutePath().normalize().equals(norm)) {
+                    idx = i;
+                    break;
+                }
+            }
+        }
+        this.setHighlightedRow(idx);
+        if (idx >= 0 && this.table != null) {
+            this.table.scrollToRow(idx);
         }
     }
 
@@ -166,8 +185,9 @@ public class FileListView extends AbstractLayout {
             return false;
         }
         // 点击保存组件外部（组件自身未消费）且其处于展开态 → 收起
+        // 入参即本组件局部坐标 = 保存组件的父局部坐标（isMouseOver 按父局部坐标判断，无需再减自身偏移）
         if (this.saveBar != null && this.saveBar.isExpanded()
-                && !this.saveBar.isMouseOver(mouseX - this.saveBar.getX(), mouseY - this.saveBar.getY())) {
+                && !this.saveBar.isMouseOver(mouseX, mouseY)) {
             this.saveBar.collapse();
         }
         // 行点击兜底：按钮/编辑格已被表格消费，剩余落在行区域的点击触发打开/选择
