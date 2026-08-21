@@ -1249,9 +1249,8 @@ public class QabCommands {
     /** 选择 DB（文件列表【选择】/点击行）：加载 + 校验，反馈结果。 */
     private static void selectDbFile(Path target) {
         DbSelectResult r = selectDb(target);
-        for (Text issue : r.issues()) {
-            Messenger.warn(issue);
-        }
+        // 校验 issues 属同批消息，统一批量发送（Toast 场景全部入队、不受条数上限挤除）
+        Messenger.notifyAll(r.issues(), ToastType.WARN);
         if (r.ok()) {
             Messenger.notify(r.feedback(), ToastType.SUCCESS);
         } else {
