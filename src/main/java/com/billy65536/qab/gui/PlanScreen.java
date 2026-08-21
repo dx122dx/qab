@@ -15,6 +15,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 
@@ -24,7 +25,8 @@ import java.util.List;
  * <p>顶部页签「计划条目 | 失败 N | 警告 M」切换数据视图，表格区域复用，无行内编辑。
  * 标题取 plan.name，缺失回退到传入计划名/翻译键；标题右侧「编辑」按钮进入
  * {@link MetaEditScreen}；底部「返回」与「编辑为购物清单」（按 itemId 聚合为
- * 临时清单跳转 {@link ShoppingListScreen}）。</p>
+ * 临时清单跳转 {@link ShoppingListScreen}）；文件列表带参打开时额外显示「选择」
+ * （设为命令层选中状态后返回文件列表）。</p>
  */
 public class PlanScreen extends ScreenContainer {
     public static final int HEADER_Y = 56;
@@ -47,16 +49,23 @@ public class PlanScreen extends ScreenContainer {
     private final String planName;
     private final Screen parent;
     private final PlanListSource planSource;
+    /** 选择回调（文件列表带参打开内页时注入；点击【选择】设为命令层选中状态后返回文件列表）。 */
+    @Nullable private final Runnable selectAction;
 
     private Tab activeTab = Tab.PLAN;
     private TableLayout layout;
 
     public PlanScreen(ShoppingPlan plan, String planName, Screen parent) {
+        this(plan, planName, parent, null);
+    }
+
+    public PlanScreen(ShoppingPlan plan, String planName, Screen parent, @Nullable Runnable selectAction) {
         super(Text.literal(listTitle(plan, planName)));
         this.plan = plan;
         this.planName = planName;
         this.parent = parent;
         this.planSource = new PlanListSource(plan);
+        this.selectAction = selectAction;
     }
 
     private static String listTitle(ShoppingPlan plan, String planName) {
@@ -122,6 +131,12 @@ public class PlanScreen extends ScreenContainer {
         this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("qab.msg.list_gui.back"), b -> this.closeScreen())
                 .dimensions(8, this.height - 24, 80, 20).build());
+        // 文件列表带参打开内页时显示【选择】：设为命令层选中状态后返回
+        if (this.selectAction != null) {
+            this.addDrawableChild(ButtonWidget.builder(
+                            Text.translatable("qab.msg.list_gui.select"), b -> this.onSelectClicked())
+                    .dimensions(92, this.height - 24, 60, 20).build());
+        }
         this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("qab.msg.plan_gui.edit_as_list"), b -> this.editAsList())
                 .dimensions(this.width - 108, this.height - 24, 100, 20).build());
@@ -254,6 +269,14 @@ public class PlanScreen extends ScreenContainer {
 
     private void closeScreen() {
         this.client.setScreen(this.parent);
+    }
+
+    /** 【选择】按钮：执行注入的选择回调并返回父屏幕（文件列表）。 */
+    private void onSelectClicked() {
+        if (this.selectAction != null) {
+            this.selectAction.run();
+        }
+        this.closeScreen();
     }
 
     /* ---- 事件 ---- */

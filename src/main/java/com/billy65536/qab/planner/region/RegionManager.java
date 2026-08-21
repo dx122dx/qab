@@ -145,6 +145,27 @@ public final class RegionManager {
         return REGION_DIR;
     }
 
+    /**
+     * 当前区域表的不可变快照（名称 + 内容指纹），用于比较区域表是否被更改。
+     *
+     * <p>指纹取 {@code sanitizeName(名称) + "|" + Gson 序列化内容}：任何「打开/新建其他表」
+     * 或「增删区域」都会改变名称或内容，从而改变指纹。快照本身不可变，
+     * 可作为 compound 选择有效性的比对基准。</p>
+     */
+    public static RegionSnapshot snapshot() {
+        ensureTable();
+        return new RegionSnapshot(currentTableName, sanitizeName(currentTableName) + "|" + GSON.toJson(currentTable));
+    }
+
+    /**
+     * 当前区域表快照（不可变值对象）。
+     *
+     * @param name        表名（打开时传入的原始名称）
+     * @param fingerprint 名称清洗 + 表内容序列化指纹，用于比对是否被变更
+     */
+    public record RegionSnapshot(String name, String fingerprint) {
+    }
+
     /** 去除文件名非法字符，避免写入失败或目录穿越。 */
     public static String sanitizeName(String name) {
         String s = name.trim().replaceAll("[\\\\/:*?\"<>|]", "_");

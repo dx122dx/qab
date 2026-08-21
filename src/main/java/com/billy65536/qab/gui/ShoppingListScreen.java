@@ -39,7 +39,8 @@ import java.util.Map;
  * <p>顶部标题 + 标题右侧「编辑」按钮（进入 {@link MetaEditScreen} 改 name/desc）
  * + 金色分隔线 + 全局设置行（倍率 / 冗余率%，点击进入编辑）+ 表头，
  * 中部 TableLayout 滚动列表（拖拽手柄 → 图标 → 名称/ID/详情 → 现有/需求/冗余数量），
- * 底部「返回」「另存为」「立即生成」「保存」按钮（临时内存清单禁用「保存」，
+ * 底部「返回」；文件列表带参打开时额外显示「选择」（设为命令层选中状态后返回文件列表）、
+ * 「另存为」「立即生成」「保存」按钮（临时内存清单禁用「保存」，
  * 另存为成功后刷新为可用）。
  * 列宽由 TableLayout#reflow 按内容测量与权重分配；
  * 「需求」列行内编辑由 TableLayout 编辑框托管，事件经 ScreenContainer 递归分发；
@@ -93,6 +94,8 @@ public class ShoppingListScreen extends ScreenContainer {
 
     private final IListSource<ShoppingItem> source;
     private final Screen parent;
+    /** 选择回调（文件列表带参打开内页时注入；点击【选择】设为命令层选中状态后返回文件列表）。 */
+    @Nullable private final Runnable selectAction;
     private final Map<String, Integer> haveCache = new HashMap<>();
     private int haveTick;
 
@@ -114,9 +117,14 @@ public class ShoppingListScreen extends ScreenContainer {
     }
 
     public ShoppingListScreen(IListSource<ShoppingItem> source, Screen parent) {
+        this(source, parent, null);
+    }
+
+    public ShoppingListScreen(IListSource<ShoppingItem> source, Screen parent, @Nullable Runnable selectAction) {
         super(Text.literal(listTitle(source)));
         this.source = source;
         this.parent = parent;
+        this.selectAction = selectAction;
     }
 
     private static String listTitle(IListSource<ShoppingItem> source) {
@@ -137,6 +145,12 @@ public class ShoppingListScreen extends ScreenContainer {
         this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("qab.msg.list_gui.back"), b -> this.closeScreen())
                 .dimensions(8, this.height - 24, 80, 20).build());
+        // 文件列表带参打开内页时显示【选择】：设为命令层选中状态后返回
+        if (this.selectAction != null) {
+            this.addDrawableChild(ButtonWidget.builder(
+                            Text.translatable("qab.msg.list_gui.select"), b -> this.onSelectClicked())
+                    .dimensions(92, this.height - 24, 60, 20).build());
+        }
         // 底部按钮右对齐：另存为 | 立即生成 | 保存
         this.addDrawableChild(ButtonWidget.builder(
                         Text.translatable("qab.msg.list_gui.save_as"), b -> this.startSaveAs())
@@ -694,6 +708,14 @@ public class ShoppingListScreen extends ScreenContainer {
     /** 返回父屏幕（构造时传入）。 */
     private void closeScreen() {
         this.client.setScreen(this.parent);
+    }
+
+    /** 【选择】按钮：执行注入的选择回调并返回父屏幕（文件列表）。 */
+    private void onSelectClicked() {
+        if (this.selectAction != null) {
+            this.selectAction.run();
+        }
+        this.closeScreen();
     }
 
     /* ---- 渲染 ---- */

@@ -10,6 +10,10 @@ import com.billy65536.qab.automatic.ShoppingRunner;
 import com.billy65536.qab.config.QabConfig;
 import com.billy65536.qab.generator.ListGenConfig;
 import com.billy65536.qab.generator.SchematicListGenerator;
+import com.billy65536.qab.gui.FileEntry;
+import com.billy65536.qab.gui.FileListScreen;
+import com.billy65536.qab.gui.FileListView;
+import com.billy65536.qab.gui.ListActions;
 import com.billy65536.qab.gui.PlanScreen;
 import com.billy65536.qab.gui.ShoppingListScreen;
 import com.billy65536.qab.gui.ShoppingListSource;
@@ -34,6 +38,7 @@ import com.mojang.brigadier.suggestion.SuggestionProvider;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.hit.BlockHitResult;
@@ -48,9 +53,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.argument;
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal;
@@ -70,8 +79,9 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.lit
  *   /qab nav stash gui|add|remove &lt;index&gt;|list|clear
  * </pre>
  *
- * <p>TODO 除 {@code /qab list gui} 与 {@code /qab plan gui}（真实打开界面）外，其余新增的
- * {@code gui} 子命令均为占位符，仅提示功能尚未实现。</p>
+ * <p>TODO 目前仅 {@code /qab gui} 总界面与 {@code /qab nav stash gui} 为占位符
+ * （仅提示功能尚未实现）；db/list/compound/plan/region 的 {@code gui} 子命令
+ * 均已打开文件列表界面。</p>
  *
  * 文件名参数统一用 {@code StringArgumentType.string()}，含会导致 string() 中断的字符（空格及
  * 命令语法保留字符）时，补全项会以双引号包裹，解析时由 {@link CommandPathHelper#resolveFile}
@@ -95,10 +105,19 @@ public class QabCommands {
 
     private static final DateTimeFormatter PLAN_TIME = DateTimeFormatter.ofPattern("yyMMddHHmmss");
 
+    /** 命令层当前选中的 DB（{@code /qab db open}、compound open、文件列表【选择】设置）。 */
     static CsQShopDbLoader selectedDb = null;
+    /** 命令层当前选中的购物清单路径（{@code /qab list open}、文件列表【选择】等设置，供计划生成默认使用）。 */
     static Path selectedList = null;
     /** 由 {@code /qab plan open} 选中，供 {@code /qab nav apply} 无参数时使用。 */
     static Path selectedPlan = null;
+
+    /** compound 高亮目标（qcmp 文件），由 compound open 或 compound 文件列表【选择】记录；region/db 变更时被清空。 */
+    static Path selectedCompound = null;
+    /** 记录 selectedCompound 时的 DB 路径快照（{@code CsQShopDbLoader.getPath()} 为 final，天然不可变）。 */
+    static Path selectedCompoundDbPath = null;
+    /** 记录 selectedCompound 时的区域表快照（不可变值对象）。 */
+    static RegionManager.RegionSnapshot selectedCompoundRegion = null;
 
     // ---- auto-complete: 委托 CommandPathHelper，含会导致 string() 中断的字符时自动加引号 ----
     private static final SuggestionProvider<FabricClientCommandSource> DB_SUGGESTIONS =
@@ -126,7 +145,7 @@ public class QabCommands {
 
             // /qab db gui|open <file>|list —— QShop 数据库（zip）
             var db = literal("db")
-                    .then(literal("gui").executes(QabCommands::execGuiPlaceholder))
+                    .then(literal("gui").executes(QabCommands::execDbGui))
                     .then(literal("open")
                             .then(argument("file", StringArgumentType.string())
                                     .suggests(DB_SUGGESTIONS)
@@ -137,7 +156,7 @@ public class QabCommands {
             // generate 的 config 格式: key=value [key=value ...]
             var list = literal("list")
                     .then(literal("gui")
-                            .executes(QabCommands::execListGui)
+                            .executes(QabCommands::execListFileList)
                             .then(argument("file", StringArgumentType.string())
                                     .suggests(LIST_SUGGESTIONS)
                                     .executes(ctx -> execListGui(ctx,
@@ -159,7 +178,7 @@ public class QabCommands {
 
             // /qab compound gui|save [name]|open <name> —— 打包/解包 DB + 分区表
             var compound = literal("compound")
-                    .then(literal("gui").executes(QabCommands::execGuiPlaceholder))
+                    .then(literal("gui").executes(QabCommands::execCompoundGui))
                     .then(literal("save")
                             .executes(ctx -> execCompoundSave(ctx, null))
                             .then(argument("name", StringArgumentType.string())
@@ -173,7 +192,7 @@ public class QabCommands {
             // /qab plan gui [file]|generate [name]|list|open <file> —— 购物计划
             var plan = literal("plan")
                     .then(literal("gui")
-                            .executes(QabCommands::execPlanGui)
+                            .executes(QabCommands::execPlanFileList)
                             .then(argument("file", StringArgumentType.string())
                                     .suggests(PLAN_SUGGESTIONS)
                                     .executes(ctx -> execPlanGui(ctx,
@@ -191,7 +210,7 @@ public class QabCommands {
 
             // /qab region gui|open|create|save|selector|highlighter|remove|list —— 区域选择 + TSP 分组
             var region = literal("region")
-                    .then(literal("gui").executes(QabCommands::execGuiPlaceholder))
+                    .then(literal("gui").executes(QabCommands::execRegionGui))
                     .then(literal("open")
                             .then(argument("name", StringArgumentType.string())
                                     .executes(QabCommands::execRegionOpen)))
@@ -261,38 +280,57 @@ public class QabCommands {
     private static int execDbOpen(CommandContext<FabricClientCommandSource> ctx) {
         String file = StringArgumentType.getString(ctx, "file");
         Path target = CommandPathHelper.resolveFile(CS_EXPORT_DIR, file, ".zip");
-        if (target != null && Files.exists(target)) {
-            try {
-                selectedDb = new CsQShopDbLoader(target);
-            } catch (Exception e) {
-                if (e instanceof IOException) {
-                    ctx.getSource().sendError(Text.translatable("qab.msg.db_open_io_error", e.getMessage()));
-                } else if(e instanceof IllegalArgumentException) {
-                    ctx.getSource().sendError(Text.translatable("qab.msg.db_open_metadata_invalid", e.getMessage()));
-                } else {
-                    ctx.getSource().sendError(Text.translatable("qab.msg.db_open_unexpected", e.getMessage()));
-                }
-                LOGGER.warn("Failed to open DB '{}': {}", target.toString(), e);
-                selectedDb = null;
-                return 0;
-            }
-
-            ValidationResult result = selectedDb.validate();
-            printValidationIssues(ctx, result);
-            if(!result.valid()) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.db_open_failed", file, "Invalid database"));
-                LOGGER.warn("Failed to open DB '{}': Invalid database", target.toString());
-                selectedDb = null;
-                return 0;
-            }
-
-            ctx.getSource().sendFeedback(Text.translatable("qab.msg.db_selected",
-                    target.getFileName().toString(), target.toString()));
-            LOGGER.info("Selected DB: {}", selectedDb);
-            return 1;
+        if (target == null || !Files.exists(target)) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.db_not_found", file, CS_EXPORT_DIR.toString()));
+            return 0;
         }
-        ctx.getSource().sendError(Text.translatable("qab.msg.db_not_found", file, CS_EXPORT_DIR.toString()));
-        return 0;
+        DbSelectResult r = selectDb(target);
+        for (Text issue : r.issues()) {
+            ctx.getSource().sendError(issue);
+        }
+        if (!r.ok()) {
+            ctx.getSource().sendError(r.feedback());
+            return 0;
+        }
+        ctx.getSource().sendFeedback(r.feedback());
+        return 1;
+    }
+
+    /**
+     * 选择 DB 核心：加载 + 校验 + 设置 {@link #selectedDb}（命令层与文件列表 GUI 双入口复用）。
+     *
+     * @return 选择结果（ok + 反馈文本 + 校验问题列表），失败时 {@code selectedDb} 保持 null
+     */
+    static DbSelectResult selectDb(Path target) {
+        List<Text> issues = new ArrayList<>();
+        try {
+            selectedDb = new CsQShopDbLoader(target);
+        } catch (Exception e) {
+            LOGGER.warn("Failed to open DB '{}': {}", target, e);
+            selectedDb = null;
+            if (e instanceof IOException) {
+                return new DbSelectResult(false, Text.translatable("qab.msg.db_open_io_error", e.getMessage()), issues);
+            }
+            if (e instanceof IllegalArgumentException) {
+                return new DbSelectResult(false, Text.translatable("qab.msg.db_open_metadata_invalid", e.getMessage()), issues);
+            }
+            return new DbSelectResult(false, Text.translatable("qab.msg.db_open_unexpected", e.getMessage()), issues);
+        }
+        ValidationResult result = selectedDb.validate();
+        issues.addAll(validationIssueTexts(result));
+        if (!result.valid()) {
+            LOGGER.warn("Failed to open DB '{}': Invalid database", target);
+            selectedDb = null;
+            return new DbSelectResult(false, Text.translatable("qab.msg.db_open_failed",
+                    target.getFileName().toString(), "Invalid database"), issues);
+        }
+        LOGGER.info("Selected DB: {}", selectedDb);
+        return new DbSelectResult(true, Text.translatable("qab.msg.db_selected",
+                target.getFileName().toString(), target.toString()), issues);
+    }
+
+    /** DB 选择结果（不可变值对象）。 */
+    record DbSelectResult(boolean ok, Text feedback, List<Text> issues) {
     }
 
     // ---- list open ----
@@ -323,28 +361,44 @@ public class QabCommands {
     }
 
     // ---- list gui ----
-    private static int execListGui(CommandContext<FabricClientCommandSource> ctx) {
-        return execListGui(ctx, null);
+    /**
+     * 打开购物清单文件列表（{@code /qab list gui} 无参入口）。
+     * 行【打开】进内页编辑、【选择】设为选中；点击行 = 打开内页。
+     */
+    private static int execListFileList(CommandContext<FabricClientCommandSource> ctx) {
+        return openFileListScreen(ctx, QAB_LIST_DIR, ".json", selectedList,
+                new ListActions(true, true, false),
+                new FileListView.Callbacks() {
+                    @Override
+                    public void onOpen(FileEntry entry) {
+                        openListInner(ctx, entry.path());
+                    }
+
+                    @Override
+                    public void onSelect(FileEntry entry) {
+                        selectedList = entry.path();
+                        notifyPlayer(Text.translatable("qab.msg.file_gui.selected", entry.displayName()));
+                    }
+
+                    @Override
+                    public void onSave(String name, Consumer<Boolean> done) {
+                    }
+
+                    @Override
+                    public String defaultSaveName() {
+                        return null;
+                    }
+                }, -1);
     }
 
+    /**
+     * 带参打开购物清单内页（{@code /qab list gui <file>}）。
+     * 不做其他操作；内页底部【选择】按钮设 {@link #selectedList} 并返回文件列表。
+     */
     private static int execListGui(CommandContext<FabricClientCommandSource> ctx, String file) {
-        Path target;
-        if (file != null && !file.isBlank()) {
-            target = CommandPathHelper.resolveFile(QAB_LIST_DIR, file, ".json");
-            if (target == null) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.list_not_found", file, QAB_LIST_DIR.toString()));
-                return 0;
-            }
-        } else {
-            target = selectedList;
-            if (target == null) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.no_list_selected"));
-                return 0;
-            }
-        }
-        if (!Files.exists(target)) {
-            ctx.getSource().sendError(Text.translatable("qab.msg.list_not_found",
-                    target.getFileName().toString(), QAB_LIST_DIR.toString()));
+        Path target = CommandPathHelper.resolveFile(QAB_LIST_DIR, file, ".json");
+        if (target == null || !Files.exists(target)) {
+            ctx.getSource().sendError(Text.translatable("qab.msg.list_not_found", file, QAB_LIST_DIR.toString()));
             return 0;
         }
         ShoppingListSource source = ShoppingListSource.load(target);
@@ -363,7 +417,11 @@ public class QabCommands {
             // 必须用 send（延迟到下一帧）而非同步 setScreen：命令运行于客户端主线程，
             // 同步切屏后，聊天框关闭时的 setScreen(null) 会将其覆盖，导致「有日志但屏幕不出现」。
             // 延迟到聊天框关闭后再切屏，与 infrastructure 的 config GUI 打开方式一致。
-            client.send(() -> client.setScreen(new ShoppingListScreen(source, client.currentScreen)));
+            client.send(() -> client.setScreen(new ShoppingListScreen(source, client.currentScreen,
+                    () -> {
+                        selectedList = target;
+                        notifyPlayer(Text.translatable("qab.msg.file_gui.selected", target.getFileName().toString()));
+                    })));
         } catch (Throwable t) {
             LOGGER.error("Failed to open shopping list GUI for {}", target, t);
             ctx.getSource().sendError(Text.literal("Failed to open list GUI: " + t));
@@ -372,40 +430,65 @@ public class QabCommands {
         return 1;
     }
 
+    /** 打开清单内页（文件列表行点击/【打开】）。返回目标 = 文件列表。 */
+    private static void openListInner(CommandContext<FabricClientCommandSource> ctx, Path target) {
+        ShoppingListSource source = ShoppingListSource.load(target);
+        if (source == null || source.size() == 0) {
+            notifyPlayer(Text.translatable("qab.msg.list_parse_failed",
+                    target.getFileName().toString(), "JSON parse or read error"));
+            return;
+        }
+        try {
+            var client = ctx.getSource().getClient();
+            client.send(() -> client.setScreen(new ShoppingListScreen(source, client.currentScreen)));
+        } catch (Throwable t) {
+            LOGGER.error("Failed to open shopping list GUI for {}", target, t);
+            notifyPlayer(Text.literal("Failed to open list GUI: " + t));
+        }
+    }
+
     // ---- plan gui ----
     /**
-     * 打开计划查看界面：无参数入口，委托 {@link #execPlanGui(CommandContext, String)} 并传 null，
-     * 此时使用 {@link #selectedPlan}（由 {@code /qab plan open} 选中），未选中时报错。
+     * 打开计划文件列表（{@code /qab plan gui} 无参入口）。
+     * 行【打开】进内页查看、【选择】设为选中；点击行 = 打开内页。
      */
-    private static int execPlanGui(CommandContext<FabricClientCommandSource> ctx) {
-        return execPlanGui(ctx, null);
+    private static int execPlanFileList(CommandContext<FabricClientCommandSource> ctx) {
+        return openFileListScreen(ctx, QAB_PLAN_DIR, ".json", selectedPlan,
+                new ListActions(true, true, false),
+                new FileListView.Callbacks() {
+                    @Override
+                    public void onOpen(FileEntry entry) {
+                        openPlanInner(ctx, entry.path());
+                    }
+
+                    @Override
+                    public void onSelect(FileEntry entry) {
+                        selectedPlan = entry.path();
+                        notifyPlayer(Text.translatable("qab.msg.file_gui.selected", entry.displayName()));
+                    }
+
+                    @Override
+                    public void onSave(String name, Consumer<Boolean> done) {
+                    }
+
+                    @Override
+                    public String defaultSaveName() {
+                        return null;
+                    }
+                }, -1);
     }
 
     /**
-     * 打开计划查看界面（PlanScreen）。
+     * 带参打开计划查看界面（{@code /qab plan gui <file>}）。
      *
-     * <p>无参数时使用 {@link #selectedPlan}（由 {@code /qab plan open} 选中），未选中报错；
-     * 带 file 时在 plan 目录解析并校验。打开后同时设为选中，便于紧接着执行 {@code /qab nav apply}。</p>
+     * <p>不做其他操作；内页底部【选择】按钮设 {@link #selectedPlan} 并返回文件列表。
+     * 不再自动设为选中（选择交给内页【选择】按钮）。</p>
      */
     private static int execPlanGui(CommandContext<FabricClientCommandSource> ctx, String file) {
-        Path target;
-        if (file != null && !file.isBlank()) {
-            target = CommandPathHelper.resolveFile(QAB_PLAN_DIR, file, ".json");
-            if (target == null) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.plan_open_not_found",
-                        file, QAB_PLAN_DIR.toString()));
-                return 0;
-            }
-        } else {
-            target = selectedPlan;
-            if (target == null) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.no_plan_selected"));
-                return 0;
-            }
-        }
-        if (!Files.exists(target)) {
+        Path target = CommandPathHelper.resolveFile(QAB_PLAN_DIR, file, ".json");
+        if (target == null || !Files.exists(target)) {
             ctx.getSource().sendError(Text.translatable("qab.msg.plan_open_not_found",
-                    target.getFileName().toString(), QAB_PLAN_DIR.toString()));
+                    file, QAB_PLAN_DIR.toString()));
             return 0;
         }
         // 打开时校验：JSON 必须可解析且含计划条目，校验通过才打开
@@ -420,21 +503,41 @@ public class QabCommands {
                     target.getFileName().toString()));
             return 0;
         }
-        // 打开 GUI 的同时设为选中，便于后续 /qab nav apply 无参使用
-        selectedPlan = target;
         String planName = stripExtension(target.getFileName().toString());
         LOGGER.info("Opening plan GUI: {}", target);
         try {
             var client = ctx.getSource().getClient();
             // 必须用 send（延迟到下一帧）而非同步 setScreen：命令运行于客户端主线程，
             // 同步切屏后，聊天框关闭时的 setScreen(null) 会将其覆盖，导致「有日志但屏幕不出现」。
-            client.send(() -> client.setScreen(new PlanScreen(plan, planName, client.currentScreen)));
+            client.send(() -> client.setScreen(new PlanScreen(plan, planName, client.currentScreen,
+                    () -> {
+                        selectedPlan = target;
+                        notifyPlayer(Text.translatable("qab.msg.file_gui.selected", target.getFileName().toString()));
+                    })));
         } catch (Throwable t) {
             LOGGER.error("Failed to open plan GUI for {}", target, t);
             ctx.getSource().sendError(Text.literal("Failed to open plan GUI: " + t));
             return 0;
         }
         return 1;
+    }
+
+    /** 打开计划内页（文件列表行点击/【打开】）。返回目标 = 文件列表。 */
+    private static void openPlanInner(CommandContext<FabricClientCommandSource> ctx, Path target) {
+        ShoppingPlan plan = loadShoppingPlan(target);
+        if (plan == null || plan.getPlan() == null || plan.getPlan().isEmpty()) {
+            notifyPlayer(Text.translatable("qab.msg.plan_open_failed",
+                    target.getFileName().toString(), "JSON parse or read error"));
+            return;
+        }
+        try {
+            var client = ctx.getSource().getClient();
+            client.send(() -> client.setScreen(new PlanScreen(plan,
+                    stripExtension(target.getFileName().toString()), client.currentScreen)));
+        } catch (Throwable t) {
+            LOGGER.error("Failed to open plan GUI for {}", target, t);
+            notifyPlayer(Text.literal("Failed to open plan GUI: " + t));
+        }
     }
 
     // ---- plan generator ----
@@ -888,9 +991,23 @@ public class QabCommands {
      * @param name 复合包名（可空，缺省取 DB 文件名去掉 {@code .zip} 后缀）
      */
     private static int execCompoundSave(CommandContext<FabricClientCommandSource> ctx, String name) {
-        if (selectedDb == null) {
-            ctx.getSource().sendError(Text.translatable("qab.msg.compound_no_db"));
+        CompoundSaveResult r = saveCompound(name);
+        if (!r.ok()) {
+            ctx.getSource().sendError(r.feedback());
             return 0;
+        }
+        ctx.getSource().sendFeedback(r.feedback());
+        return 1;
+    }
+
+    /**
+     * 保存复合包核心（命令层与文件列表保存组件双入口复用）。
+     *
+     * @param name 复合包名（可空，缺省取 DB 文件名去掉 {@code .zip} 后缀）
+     */
+    static CompoundSaveResult saveCompound(String name) {
+        if (selectedDb == null) {
+            return new CompoundSaveResult(false, Text.translatable("qab.msg.compound_no_db"), null);
         }
         if (name == null || name.isBlank()) {
             String fn = selectedDb.getPath().getFileName().toString();
@@ -919,15 +1036,18 @@ public class QabCommands {
             }
         } catch (Exception e) {
             LOGGER.error("Failed to save compound '{}': {}", out, e.getMessage());
-            ctx.getSource().sendError(Text.translatable("qab.msg.compound_io_error", e.getMessage()));
-            return 0;
+            return new CompoundSaveResult(false,
+                    Text.translatable("qab.msg.compound_io_error", e.getMessage()), null);
         }
-        ctx.getSource().sendFeedback(Text.translatable(overwrite
-                        ? "qab.msg.compound_saved_overwritten" : "qab.msg.compound_saved",
-                safe, out.toAbsolutePath().toString(), regionName, table.size()));
         LOGGER.info("Saved compound {} (db={}, region={}, {} regions)",
                 out, selectedDb.getPath(), regionName, table.size());
-        return 1;
+        return new CompoundSaveResult(true, Text.translatable(overwrite
+                ? "qab.msg.compound_saved_overwritten" : "qab.msg.compound_saved",
+                safe, out.toAbsolutePath().toString(), regionName, table.size()), out);
+    }
+
+    /** 复合包保存结果（不可变值对象）。 */
+    record CompoundSaveResult(boolean ok, Text feedback, Path out) {
     }
 
     /**
@@ -942,13 +1062,33 @@ public class QabCommands {
                     file, QAB_COMPOUND_DIR.toString()));
             return 0;
         }
+        CompoundOpenResult r = openCompound(target);
+        for (Text issue : r.issues()) {
+            ctx.getSource().sendError(issue);
+        }
+        if (!r.ok()) {
+            ctx.getSource().sendError(r.feedback());
+            return 0;
+        }
+        ctx.getSource().sendFeedback(r.feedback());
+        return 1;
+    }
+
+    /**
+     * 解包复合包并供使用核心（命令层与文件列表 GUI 双入口复用）：
+     * DB 解到 {@code qab/compound/extracted/<名>/} 并设为选中，分区表写回 region 目录并打开。
+     *
+     * <p>成功时记录 compound 选择状态（DB 路径与 region 快照均为不可变值），
+     * 供 {@link #isCompoundSelectionValid()} 比较是否被后续 region/db 变更所取消。</p>
+     */
+    static CompoundOpenResult openCompound(Path target) {
+        List<Text> issues = new ArrayList<>();
         try (CompoundImage img = CompoundImage.open(target)) {
             ValidationResult result = img.validate();
-            printValidationIssues(ctx, result);
+            issues.addAll(validationIssueTexts(result));
             if (!result.valid()) {
-                ctx.getSource().sendError(Text.translatable("qab.msg.compound_open_invalid",
-                        target.getFileName().toString()));
-                return 0;
+                return new CompoundOpenResult(false, Text.translatable("qab.msg.compound_open_invalid",
+                        target.getFileName().toString()), null, null, issues);
             }
             // 1) 解出 DB，设为选中
             Path extractDir = QAB_COMPOUND_DIR.resolve("extracted")
@@ -958,12 +1098,11 @@ public class QabCommands {
             img.copyEntryTo(CompoundImage.DB_ENTRY, dbZip);
             selectedDb = new CsQShopDbLoader(dbZip);
             ValidationResult dbResult = selectedDb.validate();
+            issues.addAll(validationIssueTexts(dbResult));
             if (!dbResult.valid()) {
-                printValidationIssues(ctx, dbResult);
                 selectedDb = null;
-                ctx.getSource().sendError(Text.translatable("qab.msg.compound_db_invalid",
-                        img.databaseFileName()));
-                return 0;
+                return new CompoundOpenResult(false, Text.translatable("qab.msg.compound_db_invalid",
+                        img.databaseFileName()), null, null, issues);
             }
             // 2) 解出分区表，写入 region 目录并打开
             String regionName = img.regionName();
@@ -973,22 +1112,232 @@ public class QabCommands {
             img.copyEntryTo(CompoundImage.REGIONS_ENTRY, regionFile);
             RegionManager.open(regionName);
 
-            ctx.getSource().sendFeedback(Text.translatable("qab.msg.compound_opened",
-                    target.getFileName().toString(), img.databaseFileName(), regionName,
-                    RegionManager.getCurrentTable().size(), target.toAbsolutePath().toString()));
+            // 记录 compound 选择状态（不可变快照，用于有效性比较）
+            selectedCompound = target;
+            selectedCompoundDbPath = selectedDb.getPath();
+            selectedCompoundRegion = RegionManager.snapshot();
             LOGGER.info("Opened compound {} (db={}, region={})", target, dbZip, regionName);
-            return 1;
+            return new CompoundOpenResult(true, Text.translatable("qab.msg.compound_opened",
+                    target.getFileName().toString(), img.databaseFileName(), regionName,
+                    RegionManager.getCurrentTable().size(), target.toAbsolutePath().toString()),
+                    dbZip, regionName, issues);
         } catch (Exception e) {
             LOGGER.error("Failed to open compound '{}': {}", target, e.getMessage());
-            ctx.getSource().sendError(Text.translatable("qab.msg.compound_io_error", e.getMessage()));
-            return 0;
+            return new CompoundOpenResult(false,
+                    Text.translatable("qab.msg.compound_io_error", e.getMessage()), null, null, issues);
         }
+    }
+
+    /** 复合包解包结果（不可变值对象）。 */
+    record CompoundOpenResult(boolean ok, Text feedback, Path dbZip, String regionName, List<Text> issues) {
     }
 
     /** 去掉文件名的扩展名（如 {@code a.qcmp -> a}）。 */
     private static String stripExtension(String fileName) {
         int dot = fileName.lastIndexOf('.');
         return dot > 0 ? fileName.substring(0, dot) : fileName;
+    }
+
+    // ---- 通用文件列表：db / list / plan / compound / region 五类文件列表工厂 ----
+
+    /**
+     * compound 选择有效性：比对记录时的 DB 路径与 region 快照（均为不可变值）是否仍与当前一致。
+     * 任一变更（打开/新建其他 region、增删区域、切换 DB）则清空 {@link #selectedCompound}（高亮失效）。
+     *
+     * @return true 表示选择仍有效（高亮保留）
+     */
+    static boolean isCompoundSelectionValid() {
+        boolean valid = selectedCompound != null
+                && selectedCompoundDbPath != null
+                && selectedCompoundRegion != null
+                && selectedDb != null
+                && selectedCompoundDbPath.equals(selectedDb.getPath())
+                && selectedCompoundRegion.equals(RegionManager.snapshot());
+        if (!valid) {
+            selectedCompound = null;
+        }
+        return valid;
+    }
+
+    /** 向玩家发一条聊天消息（命令层与 GUI 回调共用，不依赖命令上下文）。 */
+    private static void notifyPlayer(Text message) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.player != null) {
+            client.player.sendMessage(message, false);
+        }
+    }
+
+    /**
+     * 扫描目录内指定扩展名的文件；若 {@code extraGlobal} 不在目录内（全局路径文件），
+     * 追加为一行（globalPath=true，列表以下划线渲染 + tooltip 完整路径）。
+     * 目录不存在/IO 异常时返回空列表（仅 warn，不冒泡）。
+     */
+    private static List<FileEntry> scanDir(Path dir, String ext, Path extraGlobal) {
+        List<FileEntry> entries = new ArrayList<>();
+        try {
+            if (Files.isDirectory(dir)) {
+                try (Stream<Path> s = Files.list(dir)) {
+                    s.filter(p -> Files.isRegularFile(p) && p.getFileName().toString().endsWith(ext))
+                            .sorted(Comparator.comparing(p -> p.getFileName().toString()))
+                            .forEach(p -> entries.add(new FileEntry(p, p.getFileName().toString(), false)));
+                }
+            }
+        } catch (IOException e) {
+            LOGGER.warn("Failed to list '{}': {}", dir, e.getMessage());
+        }
+        if (extraGlobal != null && Files.isRegularFile(extraGlobal)) {
+            Path abs = extraGlobal.toAbsolutePath().normalize();
+            Path absDir = dir.toAbsolutePath().normalize();
+            if (!abs.startsWith(absDir)) {
+                entries.add(new FileEntry(abs, abs.getFileName().toString(), true));
+            }
+        }
+        return entries;
+    }
+
+    /**
+     * 打开通用文件列表最小 Screen（无标题组件 + 标题行壳）。
+     *
+     * @param highlightedRow 需要高亮的行索引（-1 无），compound 列表传选中行
+     */
+    private static int openFileListScreen(CommandContext<FabricClientCommandSource> ctx, Path dir, String ext,
+                                          Path extraGlobal, ListActions actions,
+                                          FileListView.Callbacks callbacks, int highlightedRow) {
+        List<FileEntry> entries = scanDir(dir, ext, extraGlobal);
+        var client = ctx.getSource().getClient();
+        // 必须用 send（延迟到下一帧）切屏，防止聊天框关闭覆盖
+        client.send(() -> client.setScreen(new FileListScreen(
+                Text.translatable("qab.msg.file_gui.title"), actions, entries, callbacks, highlightedRow)));
+        return 1;
+    }
+
+    /** db 文件列表（行仅【选择】，点击行 = 选择）。 */
+    private static int execDbGui(CommandContext<FabricClientCommandSource> ctx) {
+        return openFileListScreen(ctx, CS_EXPORT_DIR, ".zip", null,
+                new ListActions(false, true, false),
+                new FileListView.Callbacks() {
+                    @Override
+                    public void onOpen(FileEntry entry) {
+                        selectDbFile(entry.path());
+                    }
+
+                    @Override
+                    public void onSelect(FileEntry entry) {
+                        selectDbFile(entry.path());
+                    }
+
+                    @Override
+                    public void onSave(String name, Consumer<Boolean> done) {
+                    }
+
+                    @Override
+                    public String defaultSaveName() {
+                        return null;
+                    }
+                }, -1);
+    }
+
+    /** 选择 DB（文件列表【选择】/点击行）：加载 + 校验，反馈结果。 */
+    private static void selectDbFile(Path target) {
+        DbSelectResult r = selectDb(target);
+        for (Text issue : r.issues()) {
+            notifyPlayer(issue);
+        }
+        notifyPlayer(r.feedback());
+    }
+
+    /** region 文件列表（行【打开】+【选择】，点击行 = 占位内页；选择 = 打开该表）。 */
+    private static int execRegionGui(CommandContext<FabricClientCommandSource> ctx) {
+        return openFileListScreen(ctx, RegionManager.regionDir(), ".json", null,
+                new ListActions(true, true, false),
+                new FileListView.Callbacks() {
+                    @Override
+                    public void onOpen(FileEntry entry) {
+                        // region 内页 GUI 暂未实现，统一占位提示
+                        notifyPlayer(Text.translatable("qab.msg.gui_placeholder").formatted(Formatting.GRAY));
+                    }
+
+                    @Override
+                    public void onSelect(FileEntry entry) {
+                        // region 无独立选中状态，RegionManager 即当前表；选择 = 打开该表
+                        String name = stripExtension(entry.path().getFileName().toString());
+                        RegionManager.open(name);
+                        notifyPlayer(Text.translatable("qab.msg.region_opened",
+                                name, RegionManager.getCurrentTable().size()));
+                    }
+
+                    @Override
+                    public void onSave(String name, Consumer<Boolean> done) {
+                    }
+
+                    @Override
+                    public String defaultSaveName() {
+                        return null;
+                    }
+                }, -1);
+    }
+
+    /** compound 文件列表（行仅【选择】+ 保存组件，高亮选中的 qcmp；点击行 = 选择）。 */
+    private static int execCompoundGui(CommandContext<FabricClientCommandSource> ctx) {
+        // region/db 变更则取消 compound 选择（高亮失效）
+        isCompoundSelectionValid();
+        List<FileEntry> entries = scanDir(QAB_COMPOUND_DIR, ".qcmp", null);
+        int hl = -1;
+        if (selectedCompound != null) {
+            Path norm = selectedCompound.toAbsolutePath().normalize();
+            for (int i = 0; i < entries.size(); i++) {
+                if (entries.get(i).path().equals(norm)) {
+                    hl = i;
+                    break;
+                }
+            }
+        }
+        return openFileListScreen(ctx, QAB_COMPOUND_DIR, ".qcmp", null,
+                new ListActions(false, true, true),
+                new FileListView.Callbacks() {
+                    @Override
+                    public void onOpen(FileEntry entry) {
+                        selectCompoundFile(entry);
+                    }
+
+                    @Override
+                    public void onSelect(FileEntry entry) {
+                        selectCompoundFile(entry);
+                    }
+
+                    @Override
+                    public void onSave(String name, Consumer<Boolean> done) {
+                        CompoundSaveResult r = saveCompound(name);
+                        if (r.ok()) {
+                            notifyPlayer(r.feedback());
+                            done.accept(true);
+                            // 保存成功后刷新列表（保持滚动与高亮）
+                            if (ctx.getSource().getClient().currentScreen instanceof FileListScreen fls) {
+                                fls.refresh(scanDir(QAB_COMPOUND_DIR, ".qcmp", null));
+                            }
+                        } else {
+                            notifyPlayer(r.feedback());
+                            done.accept(false);
+                        }
+                    }
+
+                    @Override
+                    public String defaultSaveName() {
+                        if (selectedDb == null) {
+                            return null;
+                        }
+                        String fn = selectedDb.getPath().getFileName().toString();
+                        return fn.endsWith(".zip") ? fn.substring(0, fn.length() - 4) : fn;
+                    }
+                }, hl);
+    }
+
+    /** 选择 qcmp 文件为 compound 高亮目标，并同步记录 db/region 快照（供有效性比较）。 */
+    private static void selectCompoundFile(FileEntry entry) {
+        selectedCompound = entry.path();
+        selectedCompoundDbPath = selectedDb != null ? selectedDb.getPath() : null;
+        selectedCompoundRegion = RegionManager.snapshot();
+        notifyPlayer(Text.translatable("qab.msg.file_gui.selected", entry.displayName()));
     }
 
     // ---- gui 占位符：功能尚未实现，统一提示 ----
@@ -1318,19 +1667,22 @@ public class QabCommands {
         }
     }
 
-    private static void printValidationIssues(CommandContext<FabricClientCommandSource> ctx, ValidationResult vr) {
-        boolean hasIssues = vr != null && (!vr.errors().isEmpty() || !vr.warnings().isEmpty());
-        if (hasIssues) {
-            int errCount = vr.errors().size();
-            int warnCount = vr.warnings().size();
-            ctx.getSource().sendError(Text.translatable("qab.msg.db_validation_issues",
-                    errCount, warnCount).formatted(errCount > 0? Formatting.RED: Formatting.YELLOW));
-            for (String error : vr.errors()) {
-                ctx.getSource().sendError(Text.literal("  [E] " + error));
-            }
-            for (String warning : vr.warnings()) {
-                ctx.getSource().sendError(Text.literal("  [W] " + warning).formatted(Formatting.YELLOW));
-            }
+    /** 把校验结果转成可展示的文本列表（标题 + 逐条 [E]/[W]），供命令与 GUI 双入口复用。 */
+    private static List<Text> validationIssueTexts(ValidationResult vr) {
+        List<Text> texts = new ArrayList<>();
+        if (vr == null || (vr.errors().isEmpty() && vr.warnings().isEmpty())) {
+            return texts;
         }
+        int errCount = vr.errors().size();
+        int warnCount = vr.warnings().size();
+        texts.add(Text.translatable("qab.msg.db_validation_issues",
+                errCount, warnCount).formatted(errCount > 0 ? Formatting.RED : Formatting.YELLOW));
+        for (String error : vr.errors()) {
+            texts.add(Text.literal("  [E] " + error));
+        }
+        for (String warning : vr.warnings()) {
+            texts.add(Text.literal("  [W] " + warning).formatted(Formatting.YELLOW));
+        }
+        return texts;
     }
 }
