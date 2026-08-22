@@ -12,6 +12,8 @@ import com.billy65536.qab.automatic.ShoppingRunner;
 import com.billy65536.qab.config.QabConfig;
 import com.billy65536.qab.generator.ListGenConfig;
 import com.billy65536.qab.generator.SchematicListGenerator;
+import com.billy65536.qab.gui.DashboardLayout;
+import com.billy65536.qab.gui.DashboardScreen;
 import com.billy65536.qab.gui.FileEntry;
 import com.billy65536.qab.gui.FileListScreen;
 import com.billy65536.qab.gui.FileListView;
@@ -81,9 +83,9 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.lit
  *   /qab nav stash gui|add|remove &lt;index&gt;|list|clear
  * </pre>
  *
- * <p>TODO 目前仅 {@code /qab gui} 总界面与 {@code /qab nav stash gui} 为占位符
- * （仅提示功能尚未实现）；db/list/compound/plan/region 的 {@code gui} 子命令
- * 均已打开文件列表界面。</p>
+ * <p>{@code /qab gui} 打开主仪表盘（自动规划 + 自动购物）；db/list/compound/plan/region
+ * 的 {@code gui} 子命令均打开文件列表界面；仅 {@code /qab nav stash gui} 仍为占位符
+ * （功能尚未实现）。</p>
  *
  * 文件名参数统一用 {@code StringArgumentType.string()}，含会导致 string() 中断的字符（空格及
  * 命令语法保留字符）时，补全项会以双引号包裹，解析时由 {@link CommandPathHelper#resolveFile}
@@ -121,6 +123,28 @@ public class QabCommands {
     /** 记录 selectedCompound 时的区域表快照（不可变值对象）。 */
     static RegionManager.RegionSnapshot selectedCompoundRegion = null;
 
+    // ---- GUI 访问入口：命令层选中状态的 public getter（仪表盘等 GUI 组件跨包读取用） ----
+
+    /** 当前选中的 DB（未选中返回 null）。 */
+    public static CsQShopDbLoader getSelectedDb() {
+        return selectedDb;
+    }
+
+    /** 当前选中的购物清单路径（未选中返回 null）。 */
+    public static Path getSelectedList() {
+        return selectedList;
+    }
+
+    /** 当前选中的购物计划路径（未选中返回 null）。 */
+    public static Path getSelectedPlan() {
+        return selectedPlan;
+    }
+
+    /** 当前选中的 compound（qcmp）路径（未选中返回 null）。 */
+    public static Path getSelectedCompound() {
+        return selectedCompound;
+    }
+
     // ---- auto-complete: 委托 CommandPathHelper，含会导致 string() 中断的字符时自动加引号 ----
     private static final SuggestionProvider<FabricClientCommandSource> DB_SUGGESTIONS =
             CommandPathHelper.suggestBasenames(CS_EXPORT_DIR, ".zip");
@@ -142,8 +166,8 @@ public class QabCommands {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
             var root = literal("qab");
 
-            // /qab gui —— 总界面（占位符，尚未实现）
-            var gui = literal("gui").executes(QabCommands::execGuiPlaceholder);
+            // /qab gui —— 主仪表盘（自动规划 + 自动购物）
+            var gui = literal("gui").executes(QabCommands::execGui);
 
             // /qab db gui|open <file>|list —— QShop 数据库（zip）
             var db = literal("db")
@@ -434,6 +458,11 @@ public class QabCommands {
 
     /** 打开清单内页（文件列表行点击/【打开】）。返回目标 = 文件列表。 */
     private static void openListInner(CommandContext<FabricClientCommandSource> ctx, Path target) {
+        openListInner(target);
+    }
+
+    /** 打开清单内页（仪表盘文件列表【打开】/行点击入口，命令层与 GUI 共用）。 */
+    public static void openListInner(Path target) {
         ShoppingListSource source = ShoppingListSource.load(target);
         if (source == null || source.size() == 0) {
             Messenger.error(Text.translatable("qab.msg.list_parse_failed",
@@ -441,7 +470,7 @@ public class QabCommands {
             return;
         }
         try {
-            var client = ctx.getSource().getClient();
+            var client = MinecraftClient.getInstance();
             client.send(() -> client.setScreen(new ShoppingListScreen(source, client.currentScreen)));
         } catch (Throwable t) {
             LOGGER.error("Failed to open shopping list GUI for {}", target, t);
@@ -526,6 +555,11 @@ public class QabCommands {
 
     /** 打开计划内页（文件列表行点击/【打开】）。返回目标 = 文件列表。 */
     private static void openPlanInner(CommandContext<FabricClientCommandSource> ctx, Path target) {
+        openPlanInner(target);
+    }
+
+    /** 打开计划内页（仪表盘文件列表【打开】/行点击入口，命令层与 GUI 共用）。 */
+    public static void openPlanInner(Path target) {
         ShoppingPlan plan = loadShoppingPlan(target);
         if (plan == null || plan.getPlan() == null || plan.getPlan().isEmpty()) {
             Messenger.error(Text.translatable("qab.msg.plan_open_failed",
@@ -533,7 +567,7 @@ public class QabCommands {
             return;
         }
         try {
-            var client = ctx.getSource().getClient();
+            var client = MinecraftClient.getInstance();
             client.send(() -> client.setScreen(new PlanScreen(plan,
                     stripExtension(target.getFileName().toString()), client.currentScreen)));
         } catch (Throwable t) {
@@ -1246,8 +1280,8 @@ public class QabCommands {
                 }, selectedDb != null ? selectedDb.getPath() : null);
     }
 
-    /** 选择 DB（文件列表【选择】/点击行）：加载 + 校验，反馈结果。 */
-    private static void selectDbFile(Path target) {
+    /** 选择 DB（文件列表【选择】/点击行，命令层与仪表盘共用）：加载 + 校验，反馈结果。 */
+    public static void selectDbFile(Path target) {
         DbSelectResult r = selectDb(target);
         // 校验 issues 属同批消息，统一批量发送（Toast 场景全部入队、不受条数上限挤除）
         Messenger.notifyAll(r.issues(), ToastType.WARN);
@@ -1336,8 +1370,8 @@ public class QabCommands {
                 }, selectedCompound);
     }
 
-    /** 选择 qcmp 文件为 compound 高亮目标，并同步记录 db/region 快照（供有效性比较）。 */
-    private static void selectCompoundFile(FileEntry entry) {
+    /** 选择 qcmp 文件为 compound 高亮目标，并同步记录 db/region 快照（供有效性比较）。命令层与仪表盘共用。 */
+    public static void selectCompoundFile(FileEntry entry) {
         selectedCompound = entry.path();
         selectedCompoundDbPath = selectedDb != null ? selectedDb.getPath() : null;
         selectedCompoundRegion = RegionManager.snapshot();
@@ -1352,6 +1386,180 @@ public class QabCommands {
         if (MinecraftClient.getInstance().currentScreen instanceof FileListScreen fls) {
             fls.highlight(entry.path());
         }
+    }
+
+    // ---- gui: 打开主仪表盘（自动规划 + 自动购物） ----
+    private static int execGui(CommandContext<FabricClientCommandSource> ctx) {
+        var client = ctx.getSource().getClient();
+        // 必须用 send（延迟到下一帧）切屏：命令运行于客户端主线程，同步切屏后，
+        // 聊天框关闭时的 setScreen(null) 会将其覆盖（与 db/list 文件列表打开方式一致）。
+        client.send(() -> client.setScreen(new DashboardScreen()));
+        LOGGER.info("Opened QAB dashboard GUI");
+        return 1;
+    }
+
+    // ---- 仪表盘嵌入文件列表（导航栏选项卡 → 内容区 FileListView） ----
+
+    /** 仪表盘非仪表盘选项卡嵌入文件列表的配置（动作/条目/回调/高亮路径）。 */
+    public record DashboardListConfig(ListActions actions, List<FileEntry> entries,
+                                      FileListView.Callbacks callbacks, Path highlight) {
+    }
+
+    /**
+     * 仪表盘选项卡对应的嵌入文件列表配置。回调复用命令层选中逻辑
+     * （selectDbFile / 选中清单与计划 / RegionManager.open / selectCompoundFile / saveCompound）。
+     * 每次调用重扫目录（支持保存后刷新列表）。
+     */
+    public static DashboardListConfig dashboardListConfig(DashboardLayout.Tab tab) {
+        return switch (tab) {
+            case DB -> new DashboardListConfig(
+                    new ListActions(false, true, false),
+                    scanDir(CS_EXPORT_DIR, ".zip", null),
+                    new FileListView.Callbacks() {
+                        @Override
+                        public void onOpen(FileEntry entry) {
+                            selectDbFile(entry.path());
+                        }
+
+                        @Override
+                        public void onSelect(FileEntry entry) {
+                            selectDbFile(entry.path());
+                        }
+
+                        @Override
+                        public void onSave(String name, Consumer<Boolean> done) {
+                        }
+
+                        @Override
+                        public String defaultSaveName() {
+                            return null;
+                        }
+                    },
+                    selectedDb != null ? selectedDb.getPath() : null);
+            case LIST -> new DashboardListConfig(
+                    new ListActions(true, true, false),
+                    scanDir(QAB_LIST_DIR, ".json", selectedList),
+                    new FileListView.Callbacks() {
+                        @Override
+                        public void onOpen(FileEntry entry) {
+                            openListInner(entry.path());
+                        }
+
+                        @Override
+                        public void onSelect(FileEntry entry) {
+                            selectedList = entry.path();
+                            Messenger.notify(Text.translatable("qab.msg.file_gui.selected",
+                                    entry.displayName()), ToastType.SUCCESS);
+                        }
+
+                        @Override
+                        public void onSave(String name, Consumer<Boolean> done) {
+                        }
+
+                        @Override
+                        public String defaultSaveName() {
+                            return null;
+                        }
+                    },
+                    selectedList);
+            case REGION -> new DashboardListConfig(
+                    new ListActions(true, true, false),
+                    scanDir(RegionManager.regionDir(), ".json", null),
+                    new FileListView.Callbacks() {
+                        @Override
+                        public void onOpen(FileEntry entry) {
+                            // region 内页 GUI 暂未实现，统一占位提示
+                            Messenger.info(Text.translatable("qab.msg.gui_placeholder").formatted(Formatting.GRAY));
+                        }
+
+                        @Override
+                        public void onSelect(FileEntry entry) {
+                            // region 无独立选中状态，RegionManager 即当前表；选择 = 打开该表
+                            String name = stripExtension(entry.path().getFileName().toString());
+                            RegionManager.open(name);
+                            Messenger.notify(Text.translatable("qab.msg.region_opened",
+                                    name, RegionManager.getCurrentTable().size()), ToastType.SUCCESS);
+                        }
+
+                        @Override
+                        public void onSave(String name, Consumer<Boolean> done) {
+                        }
+
+                        @Override
+                        public String defaultSaveName() {
+                            return null;
+                        }
+                    },
+                    RegionManager.regionDir().resolve(
+                            RegionManager.sanitizeName(RegionManager.getCurrentTableName()) + ".json"));
+            case COMPOUND -> new DashboardListConfig(
+                    new ListActions(false, true, true),
+                    scanDir(QAB_COMPOUND_DIR, ".qcmp", null),
+                    new FileListView.Callbacks() {
+                        @Override
+                        public void onOpen(FileEntry entry) {
+                            selectCompoundFile(entry);
+                        }
+
+                        @Override
+                        public void onSelect(FileEntry entry) {
+                            selectCompoundFile(entry);
+                        }
+
+                        @Override
+                        public void onSave(String name, Consumer<Boolean> done) {
+                            CompoundSaveResult r = saveCompound(name);
+                            if (r.ok()) {
+                                Messenger.notify(r.feedback(), ToastType.SUCCESS);
+                                done.accept(true);
+                                // 保存成功后重扫目录并重建列表（保持滚动与高亮）
+                                if (MinecraftClient.getInstance().currentScreen instanceof DashboardScreen ds) {
+                                    ds.getDashboardLayout().reloadList();
+                                }
+                            } else {
+                                Messenger.error(r.feedback());
+                                done.accept(false);
+                            }
+                        }
+
+                        @Override
+                        public String defaultSaveName() {
+                            if (selectedDb == null) {
+                                return null;
+                            }
+                            String fn = selectedDb.getPath().getFileName().toString();
+                            return fn.endsWith(".zip") ? fn.substring(0, fn.length() - 4) : fn;
+                        }
+                    },
+                    selectedCompound);
+            case PLAN -> new DashboardListConfig(
+                    new ListActions(true, true, false),
+                    scanDir(QAB_PLAN_DIR, ".json", selectedPlan),
+                    new FileListView.Callbacks() {
+                        @Override
+                        public void onOpen(FileEntry entry) {
+                            openPlanInner(entry.path());
+                        }
+
+                        @Override
+                        public void onSelect(FileEntry entry) {
+                            selectedPlan = entry.path();
+                            Messenger.notify(Text.translatable("qab.msg.file_gui.selected",
+                                    entry.displayName()), ToastType.SUCCESS);
+                        }
+
+                        @Override
+                        public void onSave(String name, Consumer<Boolean> done) {
+                        }
+
+                        @Override
+                        public String defaultSaveName() {
+                            return null;
+                        }
+                    },
+                    selectedPlan);
+            default -> throw new IllegalArgumentException("No list config for tab " + tab);
+        };
     }
 
     // ---- gui 占位符：功能尚未实现，统一提示 ----

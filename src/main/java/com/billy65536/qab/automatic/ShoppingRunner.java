@@ -189,6 +189,23 @@ public final class ShoppingRunner {
         return paused;
     }
 
+    // ---- 统计只读访问（供仪表盘 GUI 展示） ----
+
+    /** 已完成任务数。 */
+    public int getCompletedTasks() {
+        return completedTasks;
+    }
+
+    /** 跳过任务数（目标不可达 / 超限 / 点不到牌子等）。 */
+    public int getSkippedTasks() {
+        return skippedTasks;
+    }
+
+    /** 正在等待玩家前往的维度；null = 未等待（仅在运行中非 null）。 */
+    public String getAwaitingDimension() {
+        return awaitingDimension;
+    }
+
     /**
      * 暂停自动购买：冻结导航与存货子流程，保留全部进度。
      *
