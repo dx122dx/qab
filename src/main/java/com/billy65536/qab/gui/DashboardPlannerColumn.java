@@ -1,6 +1,5 @@
 package com.billy65536.qab.gui;
 
-import com.billy65536.infrastructure.core.gui.layout.AbstractLayout;
 import com.billy65536.qab.QShopAutoBuyMod;
 import com.billy65536.qab.planner.region.RegionManager;
 import net.minecraft.client.font.TextRenderer;
@@ -17,7 +16,7 @@ import java.nio.file.Path;
  * 对应选项卡的文件列表：数据库→DB、购物清单→LIST、区域表→REGION、包→COMPOUND、
  * 购物计划→PLAN（导航栏第 6 个选项卡，指标 q-1）。</p>
  */
-public class DashboardPlannerColumn extends AbstractLayout {
+public class DashboardPlannerColumn extends ScrollableColumn {
 
     /** 列标题区高度（标题行下开始五行）。 */
     private static final int TITLE_H = 24;
@@ -87,8 +86,14 @@ public class DashboardPlannerColumn extends AbstractLayout {
         return path == null ? null : path.getFileName().toString();
     }
 
+    /** 内容自然总高（标题 + 5 行 + 底部留白）。 */
     @Override
-    protected void renderSelf(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    public int contentHeight() {
+        return TITLE_H + ROW_TABS.length * ROW_H + PAD;
+    }
+
+    @Override
+    protected void renderContent(DrawContext ctx, int mouseX, int mouseY, float delta) {
         ctx.drawTextWithShadow(this.tr, Text.translatable("qab.msg.dashboard.planner_title"),
                 PAD, 6, TITLE_COLOR);
         int valueX = PAD + LABEL_W;
@@ -121,7 +126,8 @@ public class DashboardPlannerColumn extends AbstractLayout {
         if (button != 0) {
             return false;
         }
-        int row = (int) ((mouseY - TITLE_H) / ROW_H);
+        double cy = this.contentMouseY(mouseY); // 视口局部坐标 → 内容坐标
+        int row = (int) ((cy - TITLE_H) / ROW_H);
         if (row < 0 || row >= ROW_TABS.length) {
             return false;
         }

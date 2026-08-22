@@ -1,6 +1,5 @@
 package com.billy65536.qab.gui;
 
-import com.billy65536.infrastructure.core.gui.layout.AbstractLayout;
 import com.billy65536.qab.automatic.ShoppingRunner;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
@@ -18,7 +17,7 @@ import java.util.List;
  * <p>动作通过 {@link DashboardScreen} 的 {@code refreshAfter*} 执行并事件刷新
  * （确认项 D，tick 不轮询）。</p>
  */
-public class DashboardShoppingColumn extends AbstractLayout {
+public class DashboardShoppingColumn extends ScrollableColumn {
 
     /** 列标题区高度。 */
     private static final int TITLE_H = 24;
@@ -40,6 +39,8 @@ public class DashboardShoppingColumn extends AbstractLayout {
     private static final int PAD = 8;
     /** 按钮最小高度。 */
     private static final int BTN_MIN_H = 20;
+    /** 按钮最大高度（高分辨率下防止按钮被拉得过大）。 */
+    private static final int BTN_MAX_H = 36;
 
     private static final int TITLE_COLOR = 0xFFFFAA00;
     private static final int LABEL_COLOR = 0xFFAAAAAA;
@@ -114,14 +115,20 @@ public class DashboardShoppingColumn extends AbstractLayout {
         return mouseY >= y && mouseY < y + btnH && mouseX >= PAD && mouseX < this.width - PAD;
     }
 
-    /** 三按钮等分剩余高度（垂直等宽，确认项 C）。 */
+    /** 三按钮垂直等宽排列（确认项 C），高度在 [最小, 最大] 间等分内容剩余空间。 */
     private int computeBtnH() {
-        int avail = this.height - BTN_AREA_Y - PAD - BTN_GAP * 2;
-        return Math.max(BTN_MIN_H, avail / 3);
+        int avail = this.contentHeight() - BTN_AREA_Y - PAD - BTN_GAP * 2;
+        return Math.max(BTN_MIN_H, Math.min(BTN_MAX_H, avail / 3));
+    }
+
+    /** 内容自然总高（标题 + 状态行 + 任务三行 + 按钮区，按钮按最大高度计算）。 */
+    @Override
+    public int contentHeight() {
+        return BTN_AREA_Y + 3 * BTN_MAX_H + 2 * BTN_GAP + PAD;
     }
 
     @Override
-    protected void renderSelf(DrawContext ctx, int mouseX, int mouseY, float delta) {
+    protected void renderContent(DrawContext ctx, int mouseX, int mouseY, float delta) {
         // 列标题
         ctx.drawTextWithShadow(this.tr, Text.translatable("qab.msg.dashboard.shopping_title"),
                 PAD, 6, TITLE_COLOR);
@@ -179,10 +186,11 @@ public class DashboardShoppingColumn extends AbstractLayout {
         if (button != 0) {
             return false;
         }
+        double cy = this.contentMouseY(mouseY); // 视口局部坐标 → 内容坐标
         int btnH = computeBtnH();
         for (int i = 0; i < 3; i++) {
             int y = BTN_AREA_Y + i * (btnH + BTN_GAP);
-            if (mouseY >= y && mouseY < y + btnH && mouseX >= PAD && mouseX < this.width - PAD) {
+            if (cy >= y && cy < y + btnH && mouseX >= PAD && mouseX < this.width - PAD) {
                 if (!btnEnabled(i)) {
                     return false;
                 }

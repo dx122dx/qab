@@ -100,8 +100,26 @@ public class DashboardLayout extends AbstractLayout {
                 }
                 this.listView = null;
             }
+            // 重新挂载左右列（切非仪表盘选项卡时被卸载，避免与文件列表重叠）
+            if (this.children != null && this.plannerColumn != null
+                    && !this.children.contains(this.plannerColumn)) {
+                this.addChild(this.plannerColumn);
+            }
+            if (this.children != null && this.shoppingColumn != null
+                    && !this.children.contains(this.shoppingColumn)) {
+                this.addChild(this.shoppingColumn);
+            }
             this.refreshContent();
         } else {
+            // 卸载左右列（非仪表盘视图只保留导航栏与文件列表，防止两者重叠渲染）
+            if (this.children != null) {
+                if (this.plannerColumn != null) {
+                    this.children.remove(this.plannerColumn);
+                }
+                if (this.shoppingColumn != null) {
+                    this.children.remove(this.shoppingColumn);
+                }
+            }
             this.ensureListTab();
         }
         this.layout();
