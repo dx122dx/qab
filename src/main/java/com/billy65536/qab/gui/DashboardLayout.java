@@ -1,7 +1,8 @@
 package com.billy65536.qab.gui;
 
 import com.billy65536.infrastructure.core.gui.layout.AbstractLayout;
-import com.billy65536.qab.QabCommands;
+import com.billy65536.qab.QShopAutoBuyer;
+import com.billy65536.qab.QShopAutoBuyMod;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
@@ -119,7 +120,7 @@ public class DashboardLayout extends AbstractLayout {
 
     /** 挂载或刷新当前选项卡的嵌入文件列表（复用命令层扫描/选中/保存回调）。 */
     private void ensureListTab() {
-        QabCommands.DashboardListConfig cfg = QabCommands.dashboardListConfig(this.selectedTab);
+        QShopAutoBuyer.DashboardListConfig cfg = QShopAutoBuyMod.BUYER.dashboardListConfig(this.selectedTab);
         if (this.listView == null) {
             this.listView = new FileListView(this.tr, cfg.actions(), cfg.entries(), cfg.callbacks());
             this.addChild(this.listView);

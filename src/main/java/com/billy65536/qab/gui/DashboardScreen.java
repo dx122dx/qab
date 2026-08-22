@@ -3,7 +3,7 @@ package com.billy65536.qab.gui;
 import com.billy65536.infrastructure.core.gui.ScreenContainer;
 import com.billy65536.infrastructure.core.gui.toast.Messenger;
 import com.billy65536.infrastructure.core.gui.toast.ToastType;
-import com.billy65536.qab.QabCommands;
+import com.billy65536.qab.QShopAutoBuyMod;
 import com.billy65536.qab.automatic.ShoppingRunner;
 import com.billy65536.qab.config.ConfigLoader;
 import com.billy65536.qab.config.QabConfig;
@@ -66,12 +66,12 @@ public class DashboardScreen extends ScreenContainer {
         if (runner.isRunning()) {
             return; // 运行中，开始按钮不可点（防御）
         }
-        Path planPath = QabCommands.getSelectedPlan();
+        Path planPath = QShopAutoBuyMod.BUYER.getSelectedPlan();
         if (planPath == null) {
             Messenger.error(Text.translatable("qab.msg.nav_apply_no_selected_plan"));
             return;
         }
-        ShoppingPlan plan = QabCommands.loadShoppingPlan(planPath);
+        ShoppingPlan plan = QShopAutoBuyMod.BUYER.loadShoppingPlan(planPath);
         if (plan == null || plan.getPlan() == null || plan.getPlan().isEmpty()) {
             Messenger.error(Text.translatable("qab.msg.nav_apply_empty", planPath.getFileName().toString()));
             return;

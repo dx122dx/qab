@@ -1,7 +1,7 @@
 package com.billy65536.qab.gui;
 
 import com.billy65536.infrastructure.core.gui.layout.AbstractLayout;
-import com.billy65536.qab.QabCommands;
+import com.billy65536.qab.QShopAutoBuyMod;
 import com.billy65536.qab.planner.region.RegionManager;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
@@ -73,12 +73,12 @@ public class DashboardPlannerColumn extends AbstractLayout {
     /** 第 {@code row} 行的当前选中值（null = 未选择）。 */
     private String rowValue(int row) {
         return switch (row) {
-            case 0 -> nameOf(QabCommands.getSelectedDb() != null
-                    ? QabCommands.getSelectedDb().getPath() : null);
-            case 1 -> nameOf(QabCommands.getSelectedList());
+            case 0 -> nameOf(QShopAutoBuyMod.BUYER.getSelectedDb() != null
+                    ? QShopAutoBuyMod.BUYER.getSelectedDb().getPath() : null);
+            case 1 -> nameOf(QShopAutoBuyMod.BUYER.getSelectedList());
             case 2 -> RegionManager.getCurrentTableName();
-            case 3 -> nameOf(QabCommands.getSelectedCompound());
-            case 4 -> nameOf(QabCommands.getSelectedPlan());
+            case 3 -> nameOf(QShopAutoBuyMod.BUYER.getSelectedCompound());
+            case 4 -> nameOf(QShopAutoBuyMod.BUYER.getSelectedPlan());
             default -> null;
         };
     }

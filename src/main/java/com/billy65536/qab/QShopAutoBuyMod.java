@@ -17,6 +17,9 @@ public class QShopAutoBuyMod implements ClientModInitializer {
     public static final String MOD_ID = "qshop-auto-buy";
     public static final Logger LOGGER = LoggerFactory.getLogger("qab");
 
+    /** QAB 业务核心全局实例（GUI / 命令层统一经此访问；外部模组可 new QShopAutoBuyer() 建独立实例）。 */
+    public static final QShopAutoBuyer BUYER = new QShopAutoBuyer();
+
     @Override
     public void onInitializeClient() {
         LOGGER.info("QShopAutoBuy mod initializing...");

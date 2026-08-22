@@ -1,6 +1,6 @@
 package com.billy65536.qab.gui;
 
-import com.billy65536.qab.QabCommands;
+import com.billy65536.qab.QShopAutoBuyMod;
 import com.billy65536.qab.planner.model.PlanEntry;
 import com.billy65536.qab.planner.model.ShoppingItem;
 import com.billy65536.qab.planner.model.ShoppingList;
@@ -96,7 +96,7 @@ public class PlanListSource implements IListSource<ShoppingItem> {
 
     @Override
     public boolean saveAs(String name) {
-        return QabCommands.saveShoppingListAs(this.list, name) != null;
+        return QShopAutoBuyMod.BUYER.saveShoppingListAs(this.list, name) != null;
     }
 
     @Override

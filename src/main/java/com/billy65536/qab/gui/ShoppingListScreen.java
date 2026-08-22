@@ -7,7 +7,8 @@ import com.billy65536.infrastructure.core.gui.toast.ToastType;
 import com.billy65536.infrastructure.core.gui.layout.MultiLineTextCell;
 import com.billy65536.infrastructure.core.gui.layout.TableLayout;
 import com.billy65536.infrastructure.core.gui.layout.TableLayoutBuilder;
-import com.billy65536.qab.QabCommands;
+import com.billy65536.qab.QShopAutoBuyMod;
+import com.billy65536.qab.QShopAutoBuyer;
 import com.billy65536.qab.automatic.InventoryCapacityCalculator;
 import com.billy65536.qab.planner.model.ShoppingItem;
 import com.billy65536.qab.planner.model.ShoppingList;
@@ -678,7 +679,7 @@ public class ShoppingListScreen extends ScreenContainer {
             planName = "plan"; // 清单未命名时的兜底计划名
         }
         final String finalName = planName;
-        QabCommands.GenerateResult result = QabCommands.generateAndSavePlan(list, finalName);
+        QShopAutoBuyer.GenerateResult result = QShopAutoBuyMod.BUYER.generateAndSavePlan(list, finalName);
         if (result.ok()) {
             Messenger.notify(Text.translatable(
                     "qab.msg.list_gui.generate_success", result.path().getFileName().toString()), ToastType.SUCCESS);

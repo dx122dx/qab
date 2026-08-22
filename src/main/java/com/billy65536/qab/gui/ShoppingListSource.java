@@ -1,6 +1,7 @@
 package com.billy65536.qab.gui;
 
-import com.billy65536.qab.QabCommands;
+import com.billy65536.qab.QShopAutoBuyMod;
+import com.billy65536.qab.QShopAutoBuyer;
 import com.billy65536.qab.planner.model.ShoppingItem;
 import com.billy65536.qab.planner.model.ShoppingList;
 
@@ -11,7 +12,7 @@ import java.util.List;
  * 购物清单的 {@link IListSource} 实现：包装内存中的 {@link ShoppingList} 与目标路径，
  * 保存时以 Gson pretty 格式写回 JSON（与命令层持久化约定一致）。
  *
- * <p>加载复用 {@link QabCommands#loadShoppingList(Path)}，避免两处解析逻辑。
+ * <p>加载复用 {@link QShopAutoBuyer#loadShoppingList(Path)}，避免两处解析逻辑。
  * 支持临时模式：{@code path == null} 表示仅内存清单（从计划转换而来），
  * 此时 {@link #save()} 返回 false、{@link #isPersistable()} 返回 false，
  * 屏幕层据此禁用「保存」按钮。</p>
@@ -30,7 +31,7 @@ public class ShoppingListSource implements IListSource<ShoppingItem> {
      * 从指定路径加载清单并包装为数据源；解析失败时返回 null。
      */
     public static ShoppingListSource load(Path path) {
-        ShoppingList list = QabCommands.loadShoppingList(path);
+        ShoppingList list = QShopAutoBuyMod.BUYER.loadShoppingList(path);
         if (list == null) return null;
         return new ShoppingListSource(list, path);
     }
@@ -66,7 +67,7 @@ public class ShoppingListSource implements IListSource<ShoppingItem> {
         if (path == null) {
             return false;
         }
-        return QabCommands.saveShoppingList(path, list);
+        return QShopAutoBuyMod.BUYER.saveShoppingList(path, list);
     }
 
     @Override
@@ -86,7 +87,7 @@ public class ShoppingListSource implements IListSource<ShoppingItem> {
 
     @Override
     public boolean saveAs(String name) {
-        Path target = QabCommands.saveShoppingListAs(list, name);
+        Path target = QShopAutoBuyMod.BUYER.saveShoppingListAs(list, name);
         if (target == null) {
             return false;
         }

@@ -1,6 +1,6 @@
 package com.billy65536.qab.gui;
 
-import com.billy65536.qab.QabCommands;
+import com.billy65536.qab.QShopAutoBuyMod;
 import com.billy65536.qab.automatic.ShoppingRunner;
 import com.billy65536.qab.integration.CsNavigationHelper;
 import com.billy65536.qab.planner.region.RegionManager;
@@ -47,19 +47,19 @@ public final class DashboardStatus {
      * 返回缺失选中项的中文标签（null = 齐全）。优先显示最重要的缺失项。
      */
     public static String missingLabel() {
-        if (QabCommands.getSelectedDb() == null) {
+        if (QShopAutoBuyMod.BUYER.getSelectedDb() == null) {
             return "缺少数据库";
         }
-        if (QabCommands.getSelectedList() == null) {
+        if (QShopAutoBuyMod.BUYER.getSelectedList() == null) {
             return "缺少购物清单";
         }
         if (RegionManager.getCurrentTableName() == null) {
             return "缺少区域表";
         }
-        if (QabCommands.getSelectedCompound() == null) {
+        if (QShopAutoBuyMod.BUYER.getSelectedCompound() == null) {
             return "缺少包";
         }
-        if (QabCommands.getSelectedPlan() == null) {
+        if (QShopAutoBuyMod.BUYER.getSelectedPlan() == null) {
             return "缺少购物计划";
         }
         return null;
