@@ -1,8 +1,10 @@
 package com.billy65536.qab.gui;
 
 import com.billy65536.infrastructure.core.gui.ScreenContainer;
+import com.billy65536.infrastructure.core.gui.layout.AbstractLayout;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
+import org.jetbrains.annotations.Nullable;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -10,8 +12,9 @@ import java.util.List;
 /**
  * 文件列表最小 Screen 壳。
  *
- * <p>仅负责标题渲染与承载 {@link FileListView}（列表组件本身无标题、可嵌入；
- * 未来主 GUI 页面可直接复用 FileListView 整合多个列表实例）。</p>
+ * <p>仅负责标题渲染与承载 {@link RootLayout}（可选上下工具条 + {@link FileListView}）。
+ * 标题按类型由调用方传入本地化键（如 {@code qab.msg.file_gui.title_list}）；工具条
+ * 不特化组件，由调用方用现有布局组件组装后经 topBar / bottomBar 槽位注入。</p>
  */
 public class FileListScreen extends ScreenContainer {
 
@@ -26,17 +29,33 @@ public class FileListScreen extends ScreenContainer {
 
     private FileListView view;
 
+    /** 可选上方工具条（标题分隔线之下），null 不挂载。 */
+    @Nullable
+    private final AbstractLayout topBar;
+
+    /** 可选下方工具条（列表底部），null 不挂载。 */
+    @Nullable
+    private final AbstractLayout bottomBar;
+
     public FileListScreen(Text title, ListActions actions, List<FileEntry> entries, FileListView.Callbacks callbacks) {
         this(title, actions, entries, callbacks, -1);
     }
 
     public FileListScreen(Text title, ListActions actions, List<FileEntry> entries,
                           FileListView.Callbacks callbacks, int highlightedRow) {
+        this(title, actions, entries, callbacks, highlightedRow, null, null);
+    }
+
+    public FileListScreen(Text title, ListActions actions, List<FileEntry> entries,
+                          FileListView.Callbacks callbacks, int highlightedRow,
+                          @Nullable AbstractLayout topBar, @Nullable AbstractLayout bottomBar) {
         super(title);
         this.actions = actions;
         this.entries = entries;
         this.callbacks = callbacks;
         this.highlightedRow = highlightedRow;
+        this.topBar = topBar;
+        this.bottomBar = bottomBar;
     }
 
     /** 列表组件（init 后可用）。 */
@@ -66,10 +85,11 @@ public class FileListScreen extends ScreenContainer {
         }
         this.view = new FileListView(this.textRenderer, this.actions, this.entries, this.callbacks);
         this.view.setHighlightedRow(this.highlightedRow);
-        this.setLayout(this.view);
+        RootLayout root = new RootLayout(this.view, this.topBar, this.bottomBar);
+        this.setLayout(root);
         super.init();
-        this.view.setBounds(0, HEADER_Y, this.width, this.height - HEADER_Y);
-        this.view.layout();
+        root.setBounds(0, HEADER_Y, this.width, this.height - HEADER_Y);
+        root.layout();
     }
 
     @Override

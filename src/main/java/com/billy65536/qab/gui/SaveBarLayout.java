@@ -4,6 +4,7 @@ import com.billy65536.infrastructure.core.gui.layout.AbstractLayout;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
+import org.jetbrains.annotations.Nullable;
 
 import org.lwjgl.glfw.GLFW;
 
@@ -14,7 +15,8 @@ import org.lwjgl.glfw.GLFW;
  * Enter 提交 / Esc 取消 / 点击外部收起（由宿主转发）。提交结果经
  * {@link FileListView.Callbacks#onSave} 反馈，成功自动收起。</p>
  *
- * <p>自包含实现：渲染与命中全部由本组件完成（不依赖 SpruceUI Widget 与 Screen 注册），
+ * <p>收起态按钮文案可自定义（如「新建购物清单」），默认 {@code qab.msg.file_gui.save}。
+ * 自包含实现：渲染与命中全部由本组件完成（不依赖 SpruceUI Widget 与 Screen 注册），
  * 可作为独立组件在任意布局树中复用。</p>
  */
 public class SaveBarLayout extends AbstractLayout {
@@ -30,14 +32,23 @@ public class SaveBarLayout extends AbstractLayout {
 
     private final TextRenderer tr;
     private final FileListView.Callbacks callbacks;
+    /** 收起态按钮文案（null 用默认「保存」）。 */
+    @Nullable
+    private final Text buttonLabel;
 
     private boolean expanded;
     private final StringBuilder text = new StringBuilder();
     private boolean committing;
 
     public SaveBarLayout(TextRenderer tr, FileListView.Callbacks callbacks) {
+        this(tr, callbacks, null);
+    }
+
+    /** @param buttonLabel 收起态按钮文案；null 用默认 {@code qab.msg.file_gui.save}。 */
+    public SaveBarLayout(TextRenderer tr, FileListView.Callbacks callbacks, @Nullable Text buttonLabel) {
         this.tr = tr;
         this.callbacks = callbacks;
+        this.buttonLabel = buttonLabel;
     }
 
     public boolean isExpanded() {
@@ -80,9 +91,13 @@ public class SaveBarLayout extends AbstractLayout {
 
     /* ---- 布局（自绘矩形） ---- */
 
+    /** 收起态按钮文案（自定义或默认「保存」）。 */
+    private Text buttonLabel() {
+        return this.buttonLabel != null ? this.buttonLabel : Text.translatable("qab.msg.file_gui.save");
+    }
+
     private int[] saveBtnRect() {
-        String label = Text.translatable("qab.msg.file_gui.save").getString();
-        int w = this.tr.getWidth(label) + 14;
+        int w = this.tr.getWidth(this.buttonLabel()) + 14;
         int x = this.width - w - 20;
         int y = (this.height - BTN_H) / 2;
         return new int[]{x, y, w, BTN_H};
@@ -178,8 +193,7 @@ public class SaveBarLayout extends AbstractLayout {
         if (!this.expanded) {
             int[] r = this.saveBtnRect();
             int color = hit(r, mouseX, mouseY) ? 0xFFFFFF55 : 0xFF55FFFF;
-            String label = Text.translatable("qab.msg.file_gui.save").getString();
-            ctx.drawTextWithShadow(this.tr, Text.literal(label), r[0] + 7, r[1] + (BTN_H - 9) / 2, color);
+            ctx.drawTextWithShadow(this.tr, this.buttonLabel(), r[0] + 7, r[1] + (BTN_H - 9) / 2, color);
             return;
         }
         int[] f = this.fieldRect();

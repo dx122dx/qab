@@ -6,6 +6,10 @@ import com.billy65536.infrastructure.core.gui.toast.ToastType;
 import com.billy65536.infrastructure.util.archive.ArchiveWriter;
 import com.billy65536.infrastructure.util.archive.ValidationResult;
 import com.billy65536.qab.compound.CompoundImage;
+import com.billy65536.qab.config.BlockMappingConfig;
+import com.billy65536.qab.config.ConfigLoader;
+import com.billy65536.qab.generator.ListGenConfig;
+import com.billy65536.qab.generator.SchematicListGenerator;
 import com.billy65536.qab.gui.DashboardLayout;
 import com.billy65536.qab.gui.DashboardScreen;
 import com.billy65536.qab.gui.FileEntry;
@@ -283,6 +287,14 @@ public class QShopAutoBuyer {
      */
     public record GenerateResult(boolean ok, ShoppingPlan plan, Path path,
                                  String errorKey, Object[] errorArgs) {
+    }
+
+    /**
+     * 原理图生成购物清单的结果（命令层与原理图选择 GUI 双入口复用）。
+     * 成功时携带落盘路径与生成结果统计；失败时携带错误翻译键及参数。
+     */
+    public record GenerateListResult(boolean ok, Path outPath, String errorKey, Object[] errorArgs,
+                                     SchematicListGenerator.Result result) {
     }
 
     // ---- compound save/open: 利用基础设施归档工具打包/解包 DB + 分区表 ----
@@ -656,6 +668,69 @@ public class QShopAutoBuyer {
         return target;
     }
 
+    /**
+     * 从原理图生成购物清单并落盘到 list 目录（命令层与原理图选择 GUI 双入口复用）。
+     *
+     * <p>流程：实时物化方块→物品映射（{@link BlockMappingConfig}）→ 解析原理图 → 生成清单 →
+     * 空清单检查 → 输出名清洗补全 → Gson pretty 写入 {@code QAB_LIST_DIR} → 自动选中新清单。</p>
+     *
+     * @param schematic 原理图文件路径（调用方需先解析，如 {@code resolveSchematic}）
+     * @param config    生成配置（命令层为解析后的配置，GUI 传默认 {@code new ListGenConfig()}）
+     * @param outName   输出清单名（可为 null：回落 {@code config.outNameOrDefault()}，再回落清单 name）；
+     *                  非 null 时同时写入清单 name 字段
+     * @return 生成结果；失败时 {@code errorKey} 为翻译键（如 qab.msg.gen_list_parse_failed）
+     */
+    public GenerateListResult generateShoppingList(Path schematic, ListGenConfig config, String outName) {
+        if (schematic == null) {
+            return new GenerateListResult(false, null, "qab.msg.gen_list_no_file", new Object[0], null);
+        }
+        // 每次执行时实时从 qab:schematic 段物化方块→物品映射（内置默认 + 用户覆盖）
+        BlockMappingConfig.reloadFrom(ConfigLoader.getSchematicConfig());
+
+        SchematicListGenerator.Result result;
+        try {
+            result = SchematicListGenerator.generate(schematic, config);
+        } catch (Exception e) {
+            LOGGER.error("Failed to parse schematic: {}", schematic, e);
+            return new GenerateListResult(false, null, "qab.msg.gen_list_parse_failed",
+                    new Object[]{schematic.getFileName().toString(), String.valueOf(e.getMessage())}, null);
+        }
+
+        ShoppingList list = result.list();
+        if (list.getItems().isEmpty()) {
+            return new GenerateListResult(false, null, "qab.msg.gen_list_empty",
+                    new Object[]{schematic.getFileName().toString()}, result);
+        }
+
+        String name = (outName != null && !outName.isBlank())
+                ? outName
+                : (config.outNameOrDefault() != null ? config.outNameOrDefault() : list.getName());
+        String safeName = sanitizeFileName(name);
+        if (!safeName.endsWith(".json")) {
+            safeName += ".json";
+        }
+        if (outName != null && !outName.isBlank()) {
+            list.setName(outName);
+        }
+
+        Path outPath = QAB_LIST_DIR.resolve(safeName);
+        try {
+            Files.createDirectories(QAB_LIST_DIR);
+            String json = new GsonBuilder().setPrettyPrinting().create().toJson(list);
+            Files.writeString(outPath, json, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            LOGGER.error("Failed to write shopping list: {}", outPath, e);
+            return new GenerateListResult(false, null, "qab.msg.gen_list_write_failed",
+                    new Object[]{outPath.getFileName().toString(), e.getMessage()}, result);
+        }
+
+        // 生成后自动选中，便于紧接着执行 /qab plan
+        setSelectedList(outPath);
+        LOGGER.info("Shopping list generated: {} ({} types, {} blocks)",
+                outPath, result.blockTypes(), result.totalBlocks());
+        return new GenerateListResult(true, outPath, null, null, result);
+    }
+
     /** 读取购物计划 JSON；文件不存在或解析失败返回 null（旧计划缺 name/desc 字段按 null 兼容）。 */
     public ShoppingPlan loadShoppingPlan(Path path) {
         if (!Files.exists(path)) return null;
@@ -689,11 +764,20 @@ public class QShopAutoBuyer {
      * 目录不存在/IO 异常时返回空列表（仅 warn，不冒泡）。
      */
     public List<FileEntry> scanDir(Path dir, String ext, Path extraGlobal) {
+        return scanDir(dir, List.of(ext), extraGlobal);
+    }
+
+    /**
+     * 扫描目录内匹配任一扩展名的文件（多扩展名版本，供原理图选择界面使用）。
+     * 语义与单扩展名版本一致。
+     */
+    public List<FileEntry> scanDir(Path dir, List<String> exts, Path extraGlobal) {
         List<FileEntry> entries = new ArrayList<>();
         try {
             if (Files.isDirectory(dir)) {
                 try (Stream<Path> s = Files.list(dir)) {
-                    s.filter(p -> Files.isRegularFile(p) && p.getFileName().toString().endsWith(ext))
+                    s.filter(p -> Files.isRegularFile(p)
+                                    && exts.stream().anyMatch(ext -> p.getFileName().toString().endsWith(ext)))
                             .sorted(Comparator.comparing(p -> p.getFileName().toString()))
                             .forEach(p -> entries.add(new FileEntry(p, p.getFileName().toString(), false)));
                 }

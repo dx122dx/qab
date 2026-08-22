@@ -1,9 +1,9 @@
 package com.billy65536.qab;
 
+import com.billy65536.infrastructure.core.gui.layout.AbstractLayout;
 import com.billy65536.infrastructure.core.gui.toast.Messenger;
 import com.billy65536.infrastructure.core.gui.toast.ToastType;
 import com.billy65536.qab.automatic.ShoppingRunner;
-import com.billy65536.qab.config.BlockMappingConfig;
 import com.billy65536.qab.config.ConfigLoader;
 import com.billy65536.qab.config.QabConfig;
 import com.billy65536.qab.generator.ListGenConfig;
@@ -15,6 +15,7 @@ import com.billy65536.qab.gui.FileListView;
 import com.billy65536.qab.gui.ListActions;
 import com.billy65536.qab.gui.PlanScreen;
 import com.billy65536.qab.gui.ShoppingListScreen;
+import com.billy65536.qab.gui.SaveBarLayout;
 import com.billy65536.qab.gui.ShoppingListSource;
 import com.billy65536.qab.integration.CsNavigationHelper;
 import com.billy65536.qab.planner.model.ShoppingList;
@@ -25,7 +26,6 @@ import com.billy65536.qab.planner.region.RegionManager;
 import com.billy65536.qab.planner.region.RegionSelector;
 import com.billy65536.qab.planner.region.RegionTable;
 import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
@@ -33,12 +33,15 @@ import com.mojang.brigadier.suggestion.SuggestionProvider;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.font.TextRenderer;
+import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
 
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -292,6 +295,7 @@ public class QabCommands {
     /** 打开购物清单文件列表（{@code /qab list gui} 无参入口）。行【打开】进内页、点击行 = 打开内页。 */
     private static int execListFileList(CommandContext<FabricClientCommandSource> ctx) {
         return openFileListScreen(ctx, QShopAutoBuyer.QAB_LIST_DIR, ".json",
+                "qab.msg.file_gui.title_list",
                 QShopAutoBuyMod.BUYER.getSelectedList(),
                 new ListActions(true, true, false),
                 new FileListView.Callbacks() {
@@ -315,7 +319,178 @@ public class QabCommands {
                     public String defaultSaveName() {
                         return null;
                     }
-                }, QShopAutoBuyMod.BUYER.getSelectedList());
+                }, QShopAutoBuyMod.BUYER.getSelectedList(),
+                buildListTopBar(ctx, newListCallbacks()));
+    }
+
+    /**
+     * 构建 list gui 上方工具条（经 {@link RootLayout} topBar 槽位挂载）：
+     * 左侧「从投影文件生成购物清单」常驻按钮 + 右侧「新建购物清单」SaveBar 式输入。
+     * 直接组装现有布局组件（SaveBarLayout + 匿名按钮布局），不特化工具条类；
+     * 「从投影文件生成购物清单」跳转原理图选择界面（{@link #openSchematicListScreen}），
+     * 「新建购物清单」SaveBar 输入创建空清单（{@code newListCallbacks}）。
+     */
+    private static AbstractLayout buildListTopBar(CommandContext<FabricClientCommandSource> ctx,
+                                                  FileListView.Callbacks newListCallbacks) {
+        TextRenderer tr = MinecraftClient.getInstance().textRenderer;
+        Text genLabel = Text.translatable("qab.msg.list_gui.gen_from_schematic");
+        AbstractLayout genBtn = new AbstractLayout() {
+            @Override
+            protected void renderSelf(DrawContext g, int mx, int my, float delta) {
+                int w = tr.getWidth(genLabel) + 14;
+                int[] r = new int[]{10, (this.height - 20) / 2, w, 20};
+                boolean hover = mx >= r[0] && mx < r[0] + r[2] && my >= r[1] && my < r[1] + r[3];
+                g.drawTextWithShadow(tr, genLabel, r[0] + 7, r[1] + (20 - 9) / 2,
+                        hover ? 0xFFFFFF55 : 0xFF55FFFF);
+            }
+
+            @Override
+            protected boolean onMouseClicked(double mx, double my, int button) {
+                if (button != 0) {
+                    return false;
+                }
+                int w = tr.getWidth(genLabel) + 14;
+                int[] r = new int[]{10, (this.height - 20) / 2, w, 20};
+                if (mx >= r[0] && mx < r[0] + r[2] && my >= r[1] && my < r[1] + r[3]) {
+                    // 打开原理图选择界面（复用 FileListScreen，schematics 多扩展名 + SaveBar 生成保存条）
+                    openSchematicListScreen(ctx);
+                    return true;
+                }
+                return false;
+            }
+        };
+        SaveBarLayout newBar = new SaveBarLayout(tr, newListCallbacks,
+                Text.translatable("qab.msg.list_gui.new_list"));
+        AbstractLayout topBar = new AbstractLayout() {
+            @Override
+            protected void renderSelf(DrawContext g, int mx, int my, float delta) {
+            }
+
+            @Override
+            public void layout() {
+                genBtn.setBounds(0, 0, this.width, this.height);
+                genBtn.layout();
+                newBar.setBounds(0, 0, this.width, this.height);
+                newBar.layout();
+            }
+        };
+        topBar.addChild(genBtn);
+        topBar.addChild(newBar);
+        return topBar;
+    }
+
+    /**
+     * 新建购物清单 SaveBar 式输入的回调：输入名 → 创建 items 为空的 .json（name=输入名）
+     * → 刷新当前列表并高亮新文件。
+     */
+    private static FileListView.Callbacks newListCallbacks() {
+        return new FileListView.Callbacks() {
+            @Override
+            public void onOpen(FileEntry entry) {
+            }
+
+            @Override
+            public void onSelect(FileEntry entry) {
+            }
+
+            @Override
+            public void onSave(String name, Consumer<Boolean> done) {
+                ShoppingList list = new ShoppingList();
+                list.setVersion(1); // 清单格式版本，与 SchematicListGenerator.LIST_VERSION 一致
+                list.setName(name);
+                Path out = QShopAutoBuyMod.BUYER.saveShoppingListAs(list, name);
+                if (out == null) {
+                    Messenger.error(Text.translatable("qab.msg.list_gui.save_failed"));
+                    done.accept(false);
+                    return;
+                }
+                Messenger.notify(Text.translatable("qab.msg.list_gui.save_success"), ToastType.SUCCESS);
+                // 刷新列表并高亮新文件（compound 保存后刷新模式一致）
+                if (MinecraftClient.getInstance().currentScreen instanceof FileListScreen fls) {
+                    fls.refresh(QShopAutoBuyMod.BUYER.scanDir(QShopAutoBuyer.QAB_LIST_DIR, ".json", null));
+                    fls.highlight(out);
+                }
+                done.accept(true);
+            }
+
+            @Override
+            public String defaultSaveName() {
+                return null;
+            }
+        };
+    }
+
+    /**
+     * 打开原理图选择界面（复用 FileListScreen，标题 {@code title_schematic}）：
+     * schematics/ 目录按 {@link QShopAutoBuyer#SCHEMATIC_EXTENSIONS} 多扩展名列出；
+     * 行点击/选择 = 选中投影文件；SaveBar 保存条默认名 = 投影文件名去扩展名，
+     * 输入清单名确认后调生成核心（{@link QShopAutoBuyer#generateShoppingList}），
+     * 成功返回 list gui（新清单已自动选中，进入时高亮）。
+     */
+    private static int openSchematicListScreen(CommandContext<FabricClientCommandSource> ctx) {
+        List<FileEntry> entries = QShopAutoBuyMod.BUYER.scanDir(
+                QShopAutoBuyer.SCHEMATICS_DIR, QShopAutoBuyer.SCHEMATIC_EXTENSIONS, null);
+        // 当前选中的投影（行点击/选择写入；SaveBar 默认名与生成以此为准）
+        final Path[] selected = new Path[1];
+        var client = ctx.getSource().getClient();
+        // 必须用 send（延迟到下一帧）切屏，防止聊天框关闭覆盖
+        client.send(() -> client.setScreen(new FileListScreen(
+                Text.translatable("qab.msg.file_gui.title_schematic"),
+                new ListActions(false, true, true),
+                entries,
+                new FileListView.Callbacks() {
+                    @Override
+                    public void onOpen(FileEntry entry) {
+                        selectSchematic(entry);
+                    }
+
+                    @Override
+                    public void onSelect(FileEntry entry) {
+                        selectSchematic(entry);
+                    }
+
+                    private void selectSchematic(FileEntry entry) {
+                        selected[0] = entry.path();
+                        Messenger.notify(Text.translatable("qab.msg.file_gui.selected",
+                                entry.displayName()), ToastType.SUCCESS);
+                    }
+
+                    @Override
+                    public void onSave(String name, Consumer<Boolean> done) {
+                        Path schematic = selected[0];
+                        if (schematic == null) {
+                            Messenger.error(Text.translatable("qab.msg.gen_schematic_not_selected"));
+                            done.accept(false);
+                            return;
+                        }
+                        // GUI 走默认生成配置；生成核心与命令层共用（避免逻辑双写）
+                        QShopAutoBuyer.GenerateListResult r = QShopAutoBuyMod.BUYER.generateShoppingList(
+                                schematic, new ListGenConfig(), name);
+                        if (!r.ok()) {
+                            Messenger.error(Text.translatable(r.errorKey(), r.errorArgs()));
+                            done.accept(false);
+                            return;
+                        }
+                        Messenger.notify(Text.translatable("qab.msg.list_gui.save_success"),
+                                ToastType.SUCCESS);
+                        // 返回 list gui：generateShoppingList 已自动选中新清单，
+                        // execListFileList 以 getSelectedList() 为高亮路径 → 刷新并高亮
+                        execListFileList(ctx);
+                        done.accept(true);
+                    }
+
+                    @Override
+                    public String defaultSaveName() {
+                        Path schematic = selected[0];
+                        if (schematic == null) {
+                            return null;
+                        }
+                        return QShopAutoBuyMod.BUYER.stripExtension(
+                                schematic.getFileName().toString());
+                    }
+                },
+                -1, null, null)));
+        return 1;
     }
 
     /**
@@ -372,6 +547,7 @@ public class QabCommands {
      */
     private static int execPlanFileList(CommandContext<FabricClientCommandSource> ctx) {
         return openFileListScreen(ctx, QShopAutoBuyer.QAB_PLAN_DIR, ".json",
+                "qab.msg.file_gui.title_plan",
                 QShopAutoBuyMod.BUYER.getSelectedPlan(),
                 new ListActions(true, true, false),
                 new FileListView.Callbacks() {
@@ -395,7 +571,7 @@ public class QabCommands {
                     public String defaultSaveName() {
                         return null;
                     }
-                }, QShopAutoBuyMod.BUYER.getSelectedPlan());
+                }, QShopAutoBuyMod.BUYER.getSelectedPlan(), null);
     }
 
     /** 带参打开计划内页（{@code /qab plan gui <file>}）。内页底部【选择】按钮设选中计划。 */
@@ -574,11 +750,6 @@ public class QabCommands {
             return 0;
         }
 
-        // 每次执行时实时从 qab:schematic 段物化方块→物品映射（内置默认 + 用户覆盖）
-        BlockMappingConfig.reloadFrom(ConfigLoader.getSchematicConfig());
-        ctx.getSource().sendFeedback(Text.translatable("qab.msg.gen_list_mapping_refreshed")
-                .formatted(Formatting.GRAY));
-
         // file 逻辑与其他命令同：先在 schematics/ 下按扩展名查找，否则当全局路径
         Path target = resolveSchematic(file);
         if (target == null) {
@@ -592,43 +763,17 @@ public class QabCommands {
             ctx.getSource().sendError(Text.literal("  [W] " + warning).formatted(Formatting.YELLOW));
         }
 
-        SchematicListGenerator.Result result;
-        try {
-            result = SchematicListGenerator.generate(target, config);
-        } catch (Exception e) {
-            ctx.getSource().sendError(Text.translatable("qab.msg.gen_list_parse_failed",
-                    target.getFileName().toString(), String.valueOf(e.getMessage())));
-            LOGGER.error("Failed to parse schematic: {}", target, e);
+        // 生成核心统一在 QShopAutoBuyer（命令层与原理图选择 GUI 双入口共用，避免逻辑双写）
+        QShopAutoBuyer.GenerateListResult r = QShopAutoBuyMod.BUYER.generateShoppingList(target, config, null);
+        if (!r.ok()) {
+            ctx.getSource().sendError(Text.translatable(r.errorKey(), r.errorArgs()));
             return 0;
         }
+        Path outPath = r.outPath();
+        SchematicListGenerator.Result result = r.result();
 
-        ShoppingList list = result.list();
-        if (list.getItems().isEmpty()) {
-            ctx.getSource().sendError(Text.translatable("qab.msg.gen_list_empty",
-                    target.getFileName().toString()));
-            return 0;
-        }
-
-        String outName = config.outNameOrDefault() != null
-                ? config.outNameOrDefault()
-                : list.getName();
-        outName = QShopAutoBuyMod.BUYER.sanitizeFileName(outName);
-        if (!outName.endsWith(".json")) {
-            outName += ".json";
-        }
-
-        Path outPath = QShopAutoBuyer.QAB_LIST_DIR.resolve(outName);
-        try {
-            Files.createDirectories(QShopAutoBuyer.QAB_LIST_DIR);
-            String json = new GsonBuilder().setPrettyPrinting().create().toJson(list);
-            Files.writeString(outPath, json, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            ctx.getSource().sendError(Text.translatable("qab.msg.gen_list_write_failed",
-                    outPath.getFileName().toString(), e.getMessage()));
-            LOGGER.error("Failed to write shopping list: {}", outPath, e);
-            return 0;
-        }
-
+        ctx.getSource().sendFeedback(Text.translatable("qab.msg.gen_list_mapping_refreshed")
+                .formatted(Formatting.GRAY));
         // 因方块状态规则跳过的方块（门床上半部、流动液体等），说明数量为何少于方块总数
         if (result.stateSkipped() > 0) {
             ctx.getSource().sendFeedback(Text.translatable("qab.msg.gen_list_state_skipped",
@@ -663,7 +808,6 @@ public class QabCommands {
         }
 
         // 生成后自动选中，便于紧接着执行 /qab plan
-        QShopAutoBuyMod.BUYER.setSelectedList(outPath);
         ctx.getSource().sendFeedback(Text.translatable("qab.msg.list_selected",
                 outPath.getFileName().toString(), outPath.toString()).formatted(Formatting.GRAY));
 
@@ -813,15 +957,22 @@ public class QabCommands {
 
     // ---- 通用文件列表：db / list / plan / compound / region 五类文件列表工厂 ----
 
+    /**
+     * 统一文件列表工厂（db / list / plan / region / compound 共用）。
+     *
+     * @param titleKey 标题翻译键（按类型定制：title_db/title_list/title_plan/title_region/title_compound）
+     */
     private static int openFileListScreen(CommandContext<FabricClientCommandSource> ctx, Path dir, String ext,
-                                          Path extraGlobal, ListActions actions,
-                                          FileListView.Callbacks callbacks, Path highlightPath) {
+                                          String titleKey, Path extraGlobal, ListActions actions,
+                                          FileListView.Callbacks callbacks, Path highlightPath,
+                                          @Nullable AbstractLayout topBar) {
         List<FileEntry> entries = QShopAutoBuyMod.BUYER.scanDir(dir, ext, extraGlobal);
         int highlightedRow = findHighlightedRow(entries, highlightPath);
         var client = ctx.getSource().getClient();
         // 必须用 send（延迟到下一帧）切屏，防止聊天框关闭覆盖
         client.send(() -> client.setScreen(new FileListScreen(
-                Text.translatable("qab.msg.file_gui.title"), actions, entries, callbacks, highlightedRow)));
+                Text.translatable(titleKey), actions, entries, callbacks, highlightedRow,
+                topBar, null)));
         return 1;
     }
 
@@ -841,7 +992,8 @@ public class QabCommands {
 
     /** db 文件列表（行仅【选择】，点击行 = 选择）。 */
     private static int execDbGui(CommandContext<FabricClientCommandSource> ctx) {
-        return openFileListScreen(ctx, QShopAutoBuyer.CS_EXPORT_DIR, ".zip", null,
+        return openFileListScreen(ctx, QShopAutoBuyer.CS_EXPORT_DIR, ".zip",
+                "qab.msg.file_gui.title_db", null,
                 new ListActions(false, true, false),
                 new FileListView.Callbacks() {
                     @Override
@@ -863,12 +1015,13 @@ public class QabCommands {
                         return null;
                     }
                 }, QShopAutoBuyMod.BUYER.getSelectedDb() != null
-                        ? QShopAutoBuyMod.BUYER.getSelectedDb().getPath() : null);
+                        ? QShopAutoBuyMod.BUYER.getSelectedDb().getPath() : null, null);
     }
 
     /** region 文件列表（行【打开】+【选择】，点击行 = 占位内页；选择 = 打开该表）。 */
     private static int execRegionGui(CommandContext<FabricClientCommandSource> ctx) {
-        return openFileListScreen(ctx, RegionManager.regionDir(), ".json", null,
+        return openFileListScreen(ctx, RegionManager.regionDir(), ".json",
+                "qab.msg.file_gui.title_region", null,
                 new ListActions(true, true, false),
                 new FileListView.Callbacks() {
                     @Override
@@ -895,14 +1048,16 @@ public class QabCommands {
                         return null;
                     }
                 }, RegionManager.regionDir().resolve(
-                        RegionManager.sanitizeName(RegionManager.getCurrentTableName()) + ".json"));
+                        RegionManager.sanitizeName(RegionManager.getCurrentTableName()) + ".json"),
+                null);
     }
 
     /** compound 文件列表（行仅【选择】+ 保存组件，高亮选中的 qcmp；点击行 = 选择）。 */
     private static int execCompoundGui(CommandContext<FabricClientCommandSource> ctx) {
         // region/db 变更则取消 compound 选择（高亮失效）
         QShopAutoBuyMod.BUYER.isCompoundSelectionValid();
-        return openFileListScreen(ctx, QShopAutoBuyer.QAB_COMPOUND_DIR, ".qcmp", null,
+        return openFileListScreen(ctx, QShopAutoBuyer.QAB_COMPOUND_DIR, ".qcmp",
+                "qab.msg.file_gui.title_compound", null,
                 new ListActions(false, true, true),
                 new FileListView.Callbacks() {
                     @Override
@@ -942,7 +1097,7 @@ public class QabCommands {
                         String fn = QShopAutoBuyMod.BUYER.getSelectedDb().getPath().getFileName().toString();
                         return fn.endsWith(".zip") ? fn.substring(0, fn.length() - 4) : fn;
                     }
-                }, QShopAutoBuyMod.BUYER.getSelectedCompound());
+                }, QShopAutoBuyMod.BUYER.getSelectedCompound(), null);
     }
 
     /** 选择 compound 后即时刷新已打开列表的高亮行（列表屏幕仍打开时）。 */
