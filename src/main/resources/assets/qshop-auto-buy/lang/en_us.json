@@ -148,6 +148,10 @@
     "qab.msg.list_gui.gen_from_schematic": "Generate List from Schematic",
     "qab.msg.list_gui.new_list": "New List",
     "qab.msg.gen_schematic_not_selected": "Select a schematic first",
+    "qab.msg.region_gui.new_table": "New Region Table",
+    "qab.msg.plan_gui.generate": "Generate Plan",
+    "qab.msg.compound_gui.new_package": "New Package",
+    "qab.msg.db_gui.refresh": "Refresh List",
 
     "qab.msg.dashboard.title": "QShop Auto Buy Dashboard",
     "qab.msg.dashboard.tab.dashboard": "Dashboard",

@@ -148,6 +148,10 @@
     "qab.msg.list_gui.gen_from_schematic": "从投影文件生成购物清单",
     "qab.msg.list_gui.new_list": "新建购物清单",
     "qab.msg.gen_schematic_not_selected": "请先点击原理图文件将其选中",
+    "qab.msg.region_gui.new_table": "新建区域表",
+    "qab.msg.plan_gui.generate": "生成购物计划",
+    "qab.msg.compound_gui.new_package": "新建包",
+    "qab.msg.db_gui.refresh": "刷新列表",
 
     "qab.msg.dashboard.title": "QShop Auto Buy 仪表盘",
     "qab.msg.dashboard.tab.dashboard": "仪表盘",

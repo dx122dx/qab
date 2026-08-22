@@ -1,61 +1,54 @@
 package com.billy65536.qab.gui;
 
 import com.billy65536.infrastructure.core.gui.ScreenContainer;
-import com.billy65536.infrastructure.core.gui.layout.AbstractLayout;
+import com.billy65536.infrastructure.core.gui.toast.Messenger;
+import com.billy65536.infrastructure.core.gui.toast.ToastType;
+import com.billy65536.qab.QShopAutoBuyMod;
+import com.billy65536.qab.QShopAutoBuyer;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
+
 import org.jetbrains.annotations.Nullable;
 
 import java.nio.file.Path;
 import java.util.List;
 
 /**
- * 文件列表最小 Screen 壳。
+ * 文件列表 Screen 壳（独立屏宿主）。
  *
- * <p>仅负责标题渲染与承载 {@link RootLayout}（可选上下工具条 + {@link FileListView}）。
- * 标题按类型由调用方传入本地化键（如 {@code qab.msg.file_gui.title_list}）；工具条
- * 不特化组件，由调用方用现有布局组件组装后经 topBar / bottomBar 槽位注入。</p>
+ * <p>构造只需「标题 + {@link FileListType} + 宿主 + 初始高亮行」：内容（动作/条目/回调/工具条）
+ * 统一由 {@link QShopAutoBuyer#listConfig} 装配 + {@link RootLayout} 组合，
+ * 不在此处或命令层散落组装工具条（WET 源头收敛到工厂）。</p>
+ *
+ * <p>本类同时实现 {@link FileListHost}：独立屏场景下自身的刷新/跳转行为，
+ * {@code host} 参数可空（null 时以自身为宿主）。原理图选择屏以触发它的 list 屏为宿主，
+ * 生成成功后经宿主 {@link #switchToListAndHighlight()} 回到 list gui。</p>
  */
-public class FileListScreen extends ScreenContainer {
+public class FileListScreen extends ScreenContainer implements FileListHost {
 
     /** 列表区顶部 y（2x 标题 + 金色分隔线之下）。 */
     public static final int HEADER_Y = 28;
 
-    private final ListActions actions;
-    private final List<FileEntry> entries;
-    private final FileListView.Callbacks callbacks;
-    /** 需要高亮的行索引（-1 无），compound 列表用于标记选中行。 */
+    private final FileListType type;
+    /** 需要高亮的行索引（-1 无）。 */
     private final int highlightedRow;
+    /** 宿主（null → init 时置为自身；原理图屏传触发它的 list 屏）。 */
+    @Nullable
+    private final FileListHost host;
 
+    private RootLayout root;
     private FileListView view;
 
-    /** 可选上方工具条（标题分隔线之下），null 不挂载。 */
-    @Nullable
-    private final AbstractLayout topBar;
-
-    /** 可选下方工具条（列表底部），null 不挂载。 */
-    @Nullable
-    private final AbstractLayout bottomBar;
-
-    public FileListScreen(Text title, ListActions actions, List<FileEntry> entries, FileListView.Callbacks callbacks) {
-        this(title, actions, entries, callbacks, -1);
+    public FileListScreen(Text title, FileListType type, int highlightedRow) {
+        this(title, type, null, highlightedRow);
     }
 
-    public FileListScreen(Text title, ListActions actions, List<FileEntry> entries,
-                          FileListView.Callbacks callbacks, int highlightedRow) {
-        this(title, actions, entries, callbacks, highlightedRow, null, null);
-    }
-
-    public FileListScreen(Text title, ListActions actions, List<FileEntry> entries,
-                          FileListView.Callbacks callbacks, int highlightedRow,
-                          @Nullable AbstractLayout topBar, @Nullable AbstractLayout bottomBar) {
+    public FileListScreen(Text title, FileListType type, @Nullable FileListHost host, int highlightedRow) {
         super(title);
-        this.actions = actions;
-        this.entries = entries;
-        this.callbacks = callbacks;
+        this.type = type;
+        this.host = host;
         this.highlightedRow = highlightedRow;
-        this.topBar = topBar;
-        this.bottomBar = bottomBar;
     }
 
     /** 列表组件（init 后可用）。 */
@@ -70,7 +63,7 @@ public class FileListScreen extends ScreenContainer {
         }
     }
 
-    /** 按路径即时刷新选中行高亮（compound 选择后调用），并滚动到可见区。 */
+    /** 按路径即时刷新选中行高亮，并滚动到可见区。 */
     public void highlight(Path path) {
         if (this.view != null) {
             this.view.setHighlightedRowByPath(path);
@@ -83,13 +76,52 @@ public class FileListScreen extends ScreenContainer {
             super.init();
             return;
         }
-        this.view = new FileListView(this.textRenderer, this.actions, this.entries, this.callbacks);
-        this.view.setHighlightedRow(this.highlightedRow);
-        RootLayout root = new RootLayout(this.view, this.topBar, this.bottomBar);
-        this.setLayout(root);
+        FileListHost effectiveHost = this.host != null ? this.host : this;
+        QShopAutoBuyer.DashboardListConfig cfg = QShopAutoBuyMod.BUYER.listConfig(this.type);
+        this.root = new RootLayout(this.textRenderer, this.type, cfg.actions(), cfg.entries(),
+                cfg.callbacks(), effectiveHost, this.highlightedRow);
+        this.view = this.root.getView();
+        this.setLayout(this.root);
         super.init();
-        root.setBounds(0, HEADER_Y, this.width, this.height - HEADER_Y);
-        root.layout();
+        this.root.setBounds(0, HEADER_Y, this.width, this.height - HEADER_Y);
+        this.root.layout();
+    }
+
+    // ---- FileListHost（独立屏宿主） ----
+
+    @Override
+    public void refreshList() {
+        if (this.view == null) {
+            return;
+        }
+        QShopAutoBuyer.DashboardListConfig cfg = QShopAutoBuyMod.BUYER.listConfig(this.type);
+        this.view.setEntries(cfg.entries());
+        this.view.setHighlightedRowByPath(QShopAutoBuyMod.BUYER.highlightPathFor(this.type));
+    }
+
+    @Override
+    public void openSchematicPicker() {
+        // list 屏工具条「从投影文件生成购物清单」：切到原理图选择屏（隐藏视图），
+        // 以当前屏为宿主，生成成功后经 switchToListAndHighlight 回到 list gui
+        var client = MinecraftClient.getInstance();
+        // 必须用 send（延迟到下一帧）切屏，防止聊天框关闭覆盖
+        client.send(() -> client.setScreen(new FileListScreen(
+                Text.translatable("qab.msg.file_gui.title_schematic"),
+                FileListType.SCHEMATIC, this, -1)));
+    }
+
+    @Override
+    public void switchToListAndHighlight() {
+        // 原理图生成成功后回到 list gui（新清单已自动选中，进入时高亮）
+        var client = MinecraftClient.getInstance();
+        client.send(() -> client.setScreen(new FileListScreen(
+                Text.translatable("qab.msg.file_gui.title_list"),
+                FileListType.LIST, null, -1)));
+    }
+
+    @Override
+    public void toast(Text text, ToastType type) {
+        Messenger.notify(text, type);
     }
 
     @Override

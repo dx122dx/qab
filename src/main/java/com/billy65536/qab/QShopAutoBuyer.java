@@ -10,9 +10,8 @@ import com.billy65536.qab.config.BlockMappingConfig;
 import com.billy65536.qab.config.ConfigLoader;
 import com.billy65536.qab.generator.ListGenConfig;
 import com.billy65536.qab.generator.SchematicListGenerator;
-import com.billy65536.qab.gui.DashboardLayout;
-import com.billy65536.qab.gui.DashboardScreen;
 import com.billy65536.qab.gui.FileEntry;
+import com.billy65536.qab.gui.FileListType;
 import com.billy65536.qab.gui.FileListView;
 import com.billy65536.qab.gui.ListActions;
 import com.billy65536.qab.gui.PlanScreen;
@@ -92,6 +91,8 @@ public class QShopAutoBuyer {
 
     /** compound 高亮目标（qcmp 文件），由 compound open 或 compound 文件列表【选择】记录；region/db 变更时被清空。 */
     private Path selectedCompound;
+    /** 原理图选择视图当前选中的投影文件（SCHEMATIC 列表高亮来源）。 */
+    private Path selectedSchematic;
     /** 记录 selectedCompound 时的 DB 路径快照（{@code CsQShopDbLoader.getPath()} 为 final，天然不可变）。 */
     private Path selectedCompoundDbPath;
     /** 记录 selectedCompound 时的区域表快照（不可变值对象）。 */
@@ -121,6 +122,11 @@ public class QShopAutoBuyer {
     /** 当前选中的 compound（qcmp）路径（未选中返回 null）。 */
     public Path getSelectedCompound() {
         return selectedCompound;
+    }
+
+    /** 原理图选择视图当前选中的投影文件路径（未选中返回 null）。 */
+    public Path getSelectedSchematic() {
+        return selectedSchematic;
     }
 
     // ---- 选中状态 setter（命令层 / 生成流程自动选中用） ----
@@ -415,6 +421,12 @@ public class QShopAutoBuyer {
         Messenger.notify(Text.translatable("qab.msg.file_gui.selected", entry.displayName()), ToastType.SUCCESS);
     }
 
+    /** 选择投影文件为 SCHEMATIC 高亮目标（原理图选择视图【选择】/行点击）。 */
+    public void selectSchematicFile(FileEntry entry) {
+        selectedSchematic = entry.path();
+        Messenger.notify(Text.translatable("qab.msg.file_gui.selected", entry.displayName()), ToastType.SUCCESS);
+    }
+
     /**
      * compound 选择有效性：比对记录时的 DB 路径与 region 快照（均为不可变值）是否仍与当前一致。
      * 任一变更（打开/新建其他 region、增删区域、切换 DB）则清空 {@link #selectedCompound}（高亮失效）。
@@ -434,20 +446,22 @@ public class QShopAutoBuyer {
         return valid;
     }
 
-    // ---- 仪表盘嵌入文件列表（导航栏选项卡 → 内容区 FileListView） ----
+    // ---- 文件列表配置（导航栏选项卡 / 独立屏 → 内容区 FileListView） ----
 
-    /** 仪表盘非仪表盘选项卡嵌入文件列表的配置（动作/条目/回调/高亮路径）。 */
+    /** 文件列表配置（动作/条目/回调/高亮路径），按 {@link FileListType} 统一装配。 */
     public record DashboardListConfig(ListActions actions, List<FileEntry> entries,
                                       FileListView.Callbacks callbacks, Path highlight) {
     }
 
     /**
-     * 仪表盘选项卡对应的嵌入文件列表配置。回调复用命令层选中逻辑
-     * （selectDbFile / 选中清单与计划 / RegionManager.open / selectCompoundFile / saveCompound）。
-     * 每次调用重扫目录（支持保存后刷新列表）。
+     * 按类型统一装配文件列表配置（独立屏与仪表盘内嵌共用同一来源，杜绝 WET）。
+     * 回调复用命令层选中/生成核心（selectDbFile / openListInner / RegionManager.open /
+     * selectCompoundFile / saveCompound / openPlanInner / generateAndSavePlan /
+     * generateShoppingList）；onSelect 只负责「更新 BUYER 状态」，行高亮由 RootLayout
+     * 统一经 {@link #highlightPathFor(FileListType)} 刷新。每次调用重扫目录（支持保存后刷新列表）。
      */
-    public DashboardListConfig dashboardListConfig(DashboardLayout.Tab tab) {
-        return switch (tab) {
+    public DashboardListConfig listConfig(FileListType type) {
+        return switch (type) {
             case DB -> new DashboardListConfig(
                     new ListActions(false, true, false),
                     scanDir(CS_EXPORT_DIR, ".zip", null),
@@ -490,6 +504,20 @@ public class QShopAutoBuyer {
 
                         @Override
                         public void onSave(String name, Consumer<Boolean> done) {
+                            // 新建空清单（迁移自命令层 newListCallbacks）；成功后选中新文件（高亮来源），
+                            // 列表刷新由 RootLayout 包装统一调宿主 refreshList()
+                            ShoppingList list = new ShoppingList();
+                            list.setVersion(1); // 与 SchematicListGenerator.LIST_VERSION 一致
+                            list.setName(name);
+                            Path out = saveShoppingListAs(list, name);
+                            if (out == null) {
+                                Messenger.error(Text.translatable("qab.msg.list_gui.save_failed"));
+                                done.accept(false);
+                                return;
+                            }
+                            setSelectedList(out);
+                            Messenger.notify(Text.translatable("qab.msg.list_gui.save_success"), ToastType.SUCCESS);
+                            done.accept(true);
                         }
 
                         @Override
@@ -519,6 +547,17 @@ public class QShopAutoBuyer {
 
                         @Override
                         public void onSave(String name, Consumer<Boolean> done) {
+                            // 新建区域表：不存在即新建空表并立即落盘，已存在则直接打开
+                            String safe = RegionManager.sanitizeName(name);
+                            if (RegionManager.open(safe)) {
+                                Messenger.notify(Text.translatable("qab.msg.region_opened",
+                                        safe, RegionManager.getCurrentTable().size()), ToastType.SUCCESS);
+                            } else {
+                                RegionManager.save();
+                                Messenger.notify(Text.translatable("qab.msg.region_created_new",
+                                        safe, 0), ToastType.SUCCESS);
+                            }
+                            done.accept(true);
                         }
 
                         @Override
@@ -546,12 +585,12 @@ public class QShopAutoBuyer {
                         public void onSave(String name, Consumer<Boolean> done) {
                             CompoundSaveResult r = saveCompound(name);
                             if (r.ok()) {
+                                // 保存成功：记录新包为高亮目标（选中状态），列表刷新由宿主负责
+                                selectedCompound = r.out();
+                                selectedCompoundDbPath = selectedDb != null ? selectedDb.getPath() : null;
+                                selectedCompoundRegion = RegionManager.snapshot();
                                 Messenger.notify(r.feedback(), ToastType.SUCCESS);
                                 done.accept(true);
-                                // 保存成功后重扫目录并重建列表（保持滚动与高亮）
-                                if (MinecraftClient.getInstance().currentScreen instanceof DashboardScreen ds) {
-                                    ds.getDashboardLayout().reloadList();
-                                }
                             } else {
                                 Messenger.error(r.feedback());
                                 done.accept(false);
@@ -586,6 +625,18 @@ public class QShopAutoBuyer {
 
                         @Override
                         public void onSave(String name, Consumer<Boolean> done) {
+                            // 基于选中的购物清单生成计划（复用 generateAndSavePlan 核心）
+                            ShoppingList list = selectedList == null ? null : loadShoppingList(selectedList);
+                            GenerateResult r = generateAndSavePlan(list, name);
+                            if (r.ok()) {
+                                setSelectedPlan(r.path());
+                                Messenger.notify(Text.translatable("qab.msg.list_gui.generate_success",
+                                        r.path().getFileName().toString()), ToastType.SUCCESS);
+                                done.accept(true);
+                            } else {
+                                Messenger.error(Text.translatable(r.errorKey(), r.errorArgs()));
+                                done.accept(false);
+                            }
                         }
 
                         @Override
@@ -594,7 +645,60 @@ public class QShopAutoBuyer {
                         }
                     },
                     selectedPlan);
-            default -> throw new IllegalArgumentException("No list config for tab " + tab);
+            case SCHEMATIC -> new DashboardListConfig(
+                    new ListActions(false, true, true),
+                    scanDir(SCHEMATICS_DIR, SCHEMATIC_EXTENSIONS, null),
+                    new FileListView.Callbacks() {
+                        @Override
+                        public void onOpen(FileEntry entry) {
+                            selectSchematicFile(entry);
+                        }
+
+                        @Override
+                        public void onSelect(FileEntry entry) {
+                            selectSchematicFile(entry);
+                        }
+
+                        @Override
+                        public void onSave(String name, Consumer<Boolean> done) {
+                            if (selectedSchematic == null) {
+                                Messenger.error(Text.translatable("qab.msg.gen_list_no_file"));
+                                done.accept(false);
+                                return;
+                            }
+                            GenerateListResult r = generateShoppingList(selectedSchematic, new ListGenConfig(), name);
+                            if (r.ok()) {
+                                // 生成成功：新清单已自动选中（setSelectedList），切回 LIST 由宿主负责
+                                Messenger.notify(Text.translatable("qab.msg.list_gui.save_success"), ToastType.SUCCESS);
+                                done.accept(true);
+                            } else {
+                                Messenger.error(Text.translatable(r.errorKey(), r.errorArgs()));
+                                done.accept(false);
+                            }
+                        }
+
+                        @Override
+                        public String defaultSaveName() {
+                            if (selectedSchematic == null) {
+                                return null;
+                            }
+                            return stripExtension(selectedSchematic.getFileName().toString());
+                        }
+                    },
+                    selectedSchematic);
+        };
+    }
+
+    /** 统一高亮来源：返回当前选中对象路径（未选中返回 null），RootLayout 与宿主共用。 */
+    public Path highlightPathFor(FileListType type) {
+        return switch (type) {
+            case DB -> selectedDb != null ? selectedDb.getPath() : null;
+            case LIST -> selectedList;
+            case PLAN -> selectedPlan;
+            case COMPOUND -> selectedCompound;
+            case REGION -> RegionManager.regionDir().resolve(
+                    RegionManager.sanitizeName(RegionManager.getCurrentTableName()) + ".json");
+            case SCHEMATIC -> selectedSchematic;
         };
     }
 

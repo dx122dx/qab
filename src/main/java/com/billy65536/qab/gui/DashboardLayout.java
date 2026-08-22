@@ -1,6 +1,8 @@
 package com.billy65536.qab.gui;
 
 import com.billy65536.infrastructure.core.gui.layout.AbstractLayout;
+import com.billy65536.infrastructure.core.gui.toast.Messenger;
+import com.billy65536.infrastructure.core.gui.toast.ToastType;
 import com.billy65536.qab.QShopAutoBuyer;
 import com.billy65536.qab.QShopAutoBuyMod;
 import net.minecraft.client.font.TextRenderer;
@@ -13,12 +15,17 @@ import org.jetbrains.annotations.Nullable;
  * /qab gui 仪表盘根布局。
  *
  * <p>负责：大标题框（"QShop Auto Buy 仪表盘"，居中金色 + 分隔线）、横向导航栏
- * （{@link NavBarLayout}，6 选项卡）、内容区（仪表盘视图 = 左右两列，或对应选项卡的
- * {@link FileListView}）、左右列之间的垂直分割线。</p>
+ * （{@link NavBarLayout}，5 个可见选项卡 + 1 个隐藏 SCHEMATIC）、内容区（仪表盘视图 =
+ * 左右两列，或对应选项卡的 {@link RootLayout} 完整文件列表布局）、左右列之间的垂直分割线。</p>
+ *
+ * <p>本类实现 {@link FileListHost}：仪表盘内嵌场景下「刷新列表 / 打开原理图选择 /
+ * 生成后回到清单」均留在当前 dashboard（不跳独立 Screen），与独立屏
+ * {@link FileListScreen} 共享同一套 {@link RootLayout} + {@link FileListToolbarFactory}
+ * 工具条（无 WET 散落组装）。</p>
  *
  * <p>坐标（局部坐标系）：标题框顶部 → 导航栏 → 内容区占满剩余高度。</p>
  */
-public class DashboardLayout extends AbstractLayout {
+public class DashboardLayout extends AbstractLayout implements FileListHost {
 
     /** 大标题框高度。 */
     public static final int TITLE_H = 48;
@@ -36,9 +43,9 @@ public class DashboardLayout extends AbstractLayout {
     /** 垂直分割线颜色。 */
     public static final int DIVIDER_COLOR = 0xFF888888;
 
-    /** 选项卡枚举（6 个，含购物计划）。 */
+    /** 选项卡枚举（6 个可见 + 隐藏 SCHEMATIC，供「从投影文件生成购物清单」流程使用）。 */
     public enum Tab {
-        DASHBOARD, DB, LIST, REGION, COMPOUND, PLAN
+        DASHBOARD, DB, LIST, REGION, COMPOUND, PLAN, SCHEMATIC
     }
 
     private final TextRenderer tr;
@@ -50,9 +57,9 @@ public class DashboardLayout extends AbstractLayout {
     private NavBarLayout navBar;
     private DashboardPlannerColumn plannerColumn;
     private DashboardShoppingColumn shoppingColumn;
-    /** 非仪表盘选项卡对应的嵌入文件列表（null = 仪表盘视图，切换时挂载/卸载）。 */
+    /** 非仪表盘选项卡对应的嵌入完整文件列表布局（null = 仪表盘视图，切换时挂载/卸载）。 */
     @Nullable
-    private FileListView listView;
+    private RootLayout listRoot;
 
     public DashboardLayout(TextRenderer tr, DashboardScreen screen) {
         this.tr = tr;
@@ -83,22 +90,23 @@ public class DashboardLayout extends AbstractLayout {
         }
     }
 
-    /** 切换选项卡：仪表盘 ↔ 嵌入文件列表（非仪表盘选项卡 → 内容区 FileListView）。 */
+    /** 切换选项卡：仪表盘 ↔ 嵌入文件列表（非仪表盘选项卡 → 内容区 RootLayout 完整布局）。 */
     public void switchTab(Tab tab) {
         if (tab == this.selectedTab) {
             return;
         }
         this.selectedTab = tab;
-        if (this.navBar != null) {
+        // SCHEMATIC 为隐藏视图：不更新导航栏选中态（NavBarLayout 已过滤该 tab）
+        if (tab != Tab.SCHEMATIC && this.navBar != null) {
             this.navBar.setSelectedTab(tab);
         }
         if (tab == Tab.DASHBOARD) {
             // 卸载嵌入文件列表，回到左右列双视图
-            if (this.listView != null) {
+            if (this.listRoot != null) {
                 if (this.children != null) {
-                    this.children.remove(this.listView);
+                    this.children.remove(this.listRoot);
                 }
-                this.listView = null;
+                this.listRoot = null;
             }
             // 重新挂载左右列（切非仪表盘选项卡时被卸载，避免与文件列表重叠）
             if (this.children != null && this.plannerColumn != null
@@ -136,16 +144,66 @@ public class DashboardLayout extends AbstractLayout {
         this.ensureListTab();
     }
 
-    /** 挂载或刷新当前选项卡的嵌入文件列表（复用命令层扫描/选中/保存回调）。 */
+    /** 挂载或刷新当前选项卡的嵌入完整文件列表（统一经 BUYER 配置 + RootLayout 组合，含工厂工具条）。 */
     private void ensureListTab() {
-        QShopAutoBuyer.DashboardListConfig cfg = QShopAutoBuyMod.BUYER.dashboardListConfig(this.selectedTab);
-        if (this.listView == null) {
-            this.listView = new FileListView(this.tr, cfg.actions(), cfg.entries(), cfg.callbacks());
-            this.addChild(this.listView);
+        FileListType type = tabToType(this.selectedTab);
+        QShopAutoBuyer.DashboardListConfig cfg = QShopAutoBuyMod.BUYER.listConfig(type);
+        if (this.listRoot == null) {
+            this.listRoot = new RootLayout(this.tr, type, cfg.actions(), cfg.entries(),
+                    cfg.callbacks(), this, -1);
+            this.listRoot.highlight(cfg.highlight());
+            this.addChild(this.listRoot);
         } else {
-            this.listView.setEntries(cfg.entries());
-            this.listView.setHighlightedRowByPath(cfg.highlight());
+            this.listRoot.setEntries(cfg.entries());
+            this.listRoot.highlight(cfg.highlight());
         }
+    }
+
+    /** 选项卡 → 文件列表类型（SCHEMATIC 对应隐藏视图）。 */
+    private static FileListType tabToType(Tab tab) {
+        return switch (tab) {
+            case DB -> FileListType.DB;
+            case LIST -> FileListType.LIST;
+            case REGION -> FileListType.REGION;
+            case COMPOUND -> FileListType.COMPOUND;
+            case PLAN -> FileListType.PLAN;
+            case SCHEMATIC -> FileListType.SCHEMATIC;
+            default -> throw new IllegalArgumentException("No file list type for tab " + tab);
+        };
+    }
+
+    // ---- FileListHost（仪表盘内嵌宿主：全部留在当前 dashboard） ----
+
+    @Override
+    public void refreshList() {
+        if (this.selectedTab == Tab.DASHBOARD || this.listRoot == null) {
+            return;
+        }
+        FileListType type = tabToType(this.selectedTab);
+        QShopAutoBuyer.DashboardListConfig cfg = QShopAutoBuyMod.BUYER.listConfig(type);
+        this.listRoot.setEntries(cfg.entries());
+        this.listRoot.highlight(cfg.highlight());
+    }
+
+    @Override
+    public void openSchematicPicker() {
+        // dashboard 内「从投影文件生成购物清单」：切到隐藏的 SCHEMATIC 视图（留在当前 dashboard）
+        if (this.selectedTab == Tab.SCHEMATIC) {
+            return;
+        }
+        this.switchTab(Tab.SCHEMATIC);
+    }
+
+    @Override
+    public void switchToListAndHighlight() {
+        // 原理图生成成功后：回到 LIST 视图并刷新高亮（新清单已自动选中）
+        this.switchTab(Tab.LIST);
+        this.refreshList();
+    }
+
+    @Override
+    public void toast(Text text, ToastType type) {
+        Messenger.notify(text, type);
     }
 
     @Override
@@ -167,9 +225,9 @@ public class DashboardLayout extends AbstractLayout {
         this.navBar.layout();
         int contentY = TITLE_H + TITLE_LINE_H + NAV_H;
         int contentH = this.height - contentY;
-        if (this.listView != null) {
-            this.listView.setBounds(0, contentY, this.width, contentH);
-            this.listView.layout();
+        if (this.listRoot != null) {
+            this.listRoot.setBounds(0, contentY, this.width, contentH);
+            this.listRoot.layout();
             return;
         }
         if (this.plannerColumn != null) {
@@ -193,7 +251,7 @@ public class DashboardLayout extends AbstractLayout {
         // 标题下方金色分隔线
         ctx.fill(0, TITLE_H, this.width, TITLE_H + TITLE_LINE_H, LINE_COLOR);
         // 垂直分割线：仅仪表盘视图绘制（左右列之间）
-        if (this.listView == null && this.plannerColumn != null && this.shoppingColumn != null) {
+        if (this.listRoot == null && this.plannerColumn != null && this.shoppingColumn != null) {
             int dividerX = this.width / 2;
             ctx.fill(dividerX - DIVIDER_W / 2, TITLE_H + TITLE_LINE_H + NAV_H,
                     dividerX + DIVIDER_W / 2, this.height, DIVIDER_COLOR);

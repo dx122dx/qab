@@ -6,10 +6,14 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.text.Text;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
- * 横向导航栏组件（6 选项卡）。
+ * 横向导航栏组件（5 个可见选项卡）。
+ *
+ * <p>{@link DashboardLayout.Tab#SCHEMATIC} 为隐藏视图：不渲染、不响应点击
+ * （构造时从可见列表过滤），仅由 dashboard 内部流程（原理图生成）切换。</p>
  *
  * <p>选中项样式（确认项 A）：半透明金色高亮背景 + 表头金色文字，无边框。
  * 选项卡文本水平排列、居中，点击切换。文本来自语言文件
@@ -34,7 +38,9 @@ public class NavBarLayout extends AbstractLayout {
     private final DashboardLayout host;
     private DashboardLayout.Tab selectedTab;
 
-    /** 各选项卡的显示文本（按 Tab 枚举序）。 */
+    /** 可见选项卡（按 Tab 枚举序，过滤隐藏的 SCHEMATIC）。 */
+    private final DashboardLayout.Tab[] tabs;
+    /** 各选项卡的显示文本（与 {@link #tabs} 对齐）。 */
     private final Text[] labels;
     /** 各选项卡的 x 起点与宽度（layout 时计算）。 */
     private final List<int[]> bounds = new ArrayList<>();
@@ -43,11 +49,13 @@ public class NavBarLayout extends AbstractLayout {
         this.tr = tr;
         this.host = host;
         this.selectedTab = selectedTab;
-        DashboardLayout.Tab[] tabs = DashboardLayout.Tab.values();
-        this.labels = new Text[tabs.length];
-        for (int i = 0; i < tabs.length; i++) {
+        this.tabs = Arrays.stream(DashboardLayout.Tab.values())
+                .filter(t -> t != DashboardLayout.Tab.SCHEMATIC)
+                .toArray(DashboardLayout.Tab[]::new);
+        this.labels = new Text[this.tabs.length];
+        for (int i = 0; i < this.tabs.length; i++) {
             this.labels[i] = Text.translatable("qab.msg.dashboard.tab."
-                    + tabs[i].name().toLowerCase());
+                    + this.tabs[i].name().toLowerCase());
         }
     }
 
@@ -56,7 +64,7 @@ public class NavBarLayout extends AbstractLayout {
         this.selectedTab = tab;
     }
 
-    /** 返回指定 x 处的选项卡（-1 = 未命中）。 */
+    /** 返回指定 x 处的选项卡索引（-1 = 未命中）。 */
     public int tabAtX(double mouseX) {
         for (int i = 0; i < this.bounds.size(); i++) {
             int[] b = this.bounds.get(i);
@@ -84,12 +92,11 @@ public class NavBarLayout extends AbstractLayout {
         ctx.fill(0, 0, this.width, this.height, 0xC0101010);
         int y0 = 0;
         int y1 = this.height;
-        DashboardLayout.Tab[] tabs = DashboardLayout.Tab.values();
-        for (int i = 0; i < tabs.length; i++) {
+        for (int i = 0; i < this.tabs.length; i++) {
             int[] b = this.bounds.get(i);
             int tabX = b[0];
             int tabW = b[1];
-            boolean selected = tabs[i] == this.selectedTab;
+            boolean selected = this.tabs[i] == this.selectedTab;
             boolean hovered = mouseY >= 0 && mouseY < this.height
                     && mouseX >= tabX && mouseX < tabX + tabW;
             if (selected) {
@@ -118,7 +125,7 @@ public class NavBarLayout extends AbstractLayout {
         if (idx < 0) {
             return false;
         }
-        DashboardLayout.Tab tab = DashboardLayout.Tab.values()[idx];
+        DashboardLayout.Tab tab = this.tabs[idx];
         this.host.switchTab(tab);
         return true;
     }
