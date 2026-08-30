@@ -60,11 +60,16 @@ public abstract class ScrollableColumn extends AbstractLayout {
         this.setScrollOffset(this.scrollOffset); // 视口变化后收敛偏移
         // 裁剪到列视口（参数为右下角坐标，非宽高）
         ctx.enableScissor(this.absX, this.absY, this.absX + this.width, this.absY + this.height);
-        ctx.getMatrices().push();
-        ctx.getMatrices().translate(0, -this.scrollOffset, 0);
-        this.renderContent(ctx, mouseX, mouseY + this.scrollOffset, delta);
-        ctx.getMatrices().pop();
-        ctx.disableScissor();
+        try {
+            ctx.getMatrices().push();
+            ctx.getMatrices().translate(0, -this.scrollOffset, 0);
+            this.renderContent(ctx, mouseX, mouseY + this.scrollOffset, delta);
+        } finally {
+            // 矩阵与 scissor 必须配对：renderContent 抛异常时也要恢复，
+            // 否则残留偏移/裁剪会把后续绘制（如 TAIL 阶段的 toast）挡掉。
+            ctx.getMatrices().pop();
+            ctx.disableScissor();
+        }
 
         // 垂直滚动条
         int sx = this.width - SCROLLBAR_WIDTH;
